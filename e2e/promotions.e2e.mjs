@@ -495,6 +495,56 @@ try {
   calm();
   check("los intentos fallidos no dejaron anuncios en pausa ni activos (solo los 2 creados bien: Instagram y el anuncio nuevo)", (await db.sql("SELECT COUNT(*) c FROM AdPromotion WHERE status IN ('PAUSED','ACTIVE')"))[0].c === 2n);
 
+  // 7c2. Crear de nuevo un anuncio que no se pudo crear (los de arriba quedaron como «No se pudo crear»)
+  const lowRow = (await db.sql("SELECT id, status, error FROM AdPromotion WHERE name='Presupuesto bajo'"))[0];
+  check("el anuncio «Presupuesto bajo» quedó como «No se pudo crear»", lowRow?.status === "FAILED", String(lowRow?.status));
+  await edgar.goto(`${APP}/anuncios/creados`);
+  const lowListRow = edgar.locator("tr", { hasText: "Presupuesto bajo" });
+  check("en la lista, el editor ve «Crear de nuevo» en la fila del anuncio fallido", (await lowListRow.getByRole("link", { name: "Crear de nuevo" }).count()) === 1);
+  check("y no en los que se crearon bien", (await edgar.locator("tr", { hasText: "Impulso de prueba FB" }).getByRole("link", { name: "Crear de nuevo" }).count()) === 0);
+  await vera.goto(`${APP}/anuncios/creados`);
+  check("quien solo mira la lista no ve «Crear de nuevo»", (await vera.getByRole("link", { name: "Crear de nuevo" }).count()) === 0);
+
+  await edgar.goto(`${APP}/anuncios/creados/${lowRow.id}`);
+  check("la ficha del fallido explica qué corregir (subir el presupuesto sin pasar del tope)", (await edgar.getByText(/Sube el presupuesto diario por encima del mínimo/).count()) === 1);
+  check("y ofrece «Crear de nuevo con estos datos»; el editor no puede descartar", (await edgar.getByRole("link", { name: "Crear de nuevo con estos datos" }).count()) === 1 && (await edgar.getByRole("button", { name: "Descartar" }).count()) === 0);
+  await aura.goto(`${APP}/anuncios/creados/${lowRow.id}`);
+  check("quien aprueba puede descartar pero no crear de nuevo", (await aura.getByRole("button", { name: "Descartar" }).count()) === 1 && (await aura.getByRole("link", { name: "Crear de nuevo con estos datos" }).count()) === 0);
+  await vera.goto(`${APP}/anuncios/creados/${lowRow.id}`);
+  check("quien solo mira no tiene ninguna acción sobre el fallido", (await vera.getByRole("button", { name: "Descartar" }).count()) === 0 && (await vera.getByRole("link", { name: "Crear de nuevo con estos datos" }).count()) === 0);
+
+  await Promise.all([edgar.waitForURL((u) => u.pathname === "/anuncios/nuevo" && u.search.includes("copiar=")), edgar.getByRole("link", { name: "Crear de nuevo con estos datos" }).click()]);
+  await edgar.locator("#presupuesto").waitFor();
+  check("el formulario abre con los datos de antes y el aviso de qué falló", (await edgar.getByText(/Estás creando de nuevo un anuncio que no se pudo crear/).count()) === 1 && /mínimo|más de/.test(await edgar.locator("main").innerText()));
+  check("con el nombre, el presupuesto y los días del intento anterior", (await edgar.locator("#nombre").inputValue()) === "Presupuesto bajo" && (await edgar.locator("#presupuesto").inputValue()) === "20000" && (await edgar.locator("#dias").inputValue()) === "7");
+  check("sin las pestañas de tipo (no se cambia de tipo al corregir)", (await edgar.getByRole("group", { name: "Tipo de anuncio" }).count()) === 0);
+  await vera.goto(`${APP}/anuncios/nuevo?copiar=${lowRow.id}`);
+  check("quien no puede crear anuncios no abre el formulario", (await vera.locator("#presupuesto").count()) === 0);
+
+  // Meta sigue exigiendo más de 30.000: con lo mismo falla igual; corregido (dentro del tope de 50.000) se crea y el viejo no se toca.
+  fake.setScenario({ adsMinBudget: 30000, adsFail: {} });
+  await shot(edgar, "anuncios-crear-de-nuevo.png");
+  await edgar.locator("#presupuesto").fill("35000");
+  await submit(edgar);
+  const retryId = await waitCreated(edgar);
+  const retried = await promo(retryId);
+  check("corregido el presupuesto, se crea de verdad (en pausa) con el nuevo valor", retried.id !== lowRow.id && retried.status === "PAUSED" && Number(retried.dailyBudget) === 35000 && retried.name === "Presupuesto bajo");
+  check("y el intento anterior sigue como «No se pudo crear» (queda el historial)", (await promo(lowRow.id)).status === "FAILED");
+  calm();
+
+  // La imagen perdida: la ficha manda a restaurarla antes de crear de nuevo.
+  const lostRow = (await db.sql("SELECT id FROM AdPromotion WHERE name LIKE 'Anuncio: Imagen perdida%'"))[0];
+  await edgar.goto(`${APP}/anuncios/creados/${lostRow.id}`);
+  check("si falló por la imagen perdida, la ficha dice que primero hay que restaurarla", (await edgar.getByText(/Primero restaura la imagen/).count()) === 1);
+
+  // «Descartar» deja el fallido como archivado sin tocar Meta.
+  const metaBeforeDiscard = JSON.stringify(metaAds());
+  await aura.goto(`${APP}/anuncios/creados/${lowRow.id}`);
+  aura.once("dialog", (d) => d.accept());
+  await aura.getByRole("button", { name: "Descartar" }).click();
+  check("quien aprueba puede descartar un fallido: queda archivado", await until(async () => (await promo(lowRow.id)).status === "ARCHIVED"));
+  check("y descartar no toca nada en Meta", JSON.stringify(metaAds()) === metaBeforeDiscard);
+
   // 7d. El tope se vuelve a comprobar al activar, con lo que Meta tenga en ese momento
   await openBoost(edgar, FB, { name: "Para probar el tope", budget: "20000" });
   await submit(edgar);

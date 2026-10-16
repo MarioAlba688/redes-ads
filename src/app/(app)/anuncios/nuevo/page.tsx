@@ -7,6 +7,8 @@ import { dateTimeFormat } from "@/lib/display-time";
 import { imageExists } from "@/lib/media";
 import { missingAdsWriteScope } from "@/lib/meta/scopes";
 import { budgetDecimals } from "@/lib/promotions/currency";
+import { failureHints } from "@/lib/promotions/hints";
+import type { CreativeInput, PromotionKindName, Targeting } from "@/lib/promotions/types";
 import { monthSpendByAccount } from "@/lib/promotions/spend";
 import { POST_STATUS_LABELS, type PostStatusName } from "@/lib/posts";
 import { PromotionForm, type AccountOption, type BoostOption, type PageOption, type PostOption } from "../promotion-form";
@@ -31,8 +33,16 @@ function blockedReason(a: { status: string; scopes: string | null; currency: str
 export default async function NewPromotionPage({ searchParams }: PageProps<"/anuncios/nuevo">) {
   await requireUser("ads.create");
   const q = await searchParams;
-  const kind = q.tipo === "anuncio" ? "AD" : "BOOST";
-  const initial = typeof q.destino === "string" ? q.destino : typeof q.publicacion === "string" ? q.publicacion : null;
+  // «Crear de nuevo»: parte de un anuncio que no se pudo crear (sus datos precargados para corregirlos).
+  const copyId = typeof q.copiar === "string" ? q.copiar : null;
+  const copy = copyId
+    ? await db.adPromotion.findUnique({
+        where: { id: copyId },
+        select: { kind: true, objective: true, name: true, adAccountId: true, postId: true, targetId: true, dailyBudget: true, durationDays: true, targeting: true, creative: true, error: true, status: true },
+      })
+    : null;
+  const kind: PromotionKindName = copy ? (copy.kind as PromotionKindName) : q.tipo === "anuncio" ? "AD" : "BOOST";
+  const initial = copy ? (copy.kind === "BOOST" ? copy.targetId : copy.postId) : typeof q.destino === "string" ? q.destino : typeof q.publicacion === "string" ? q.publicacion : null;
   const dayFmt = dateTimeFormat({ time: false });
 
   const [adAccounts, pageAccounts, targets, posts] = await Promise.all([
@@ -64,6 +74,24 @@ export default async function NewPromotionPage({ searchParams }: PageProps<"/anu
       : Promise.resolve([]),
   ]);
 
+  // La publicacion de origen puede ser mas vieja que las 60 mas recientes que se ofrecen: se agrega para que quede elegida.
+  const extraTarget =
+    kind === "BOOST" && initial && !targets.some((t) => t.id === initial)
+      ? await db.postTarget.findFirst({
+          where: { id: initial, status: "PUBLISHED", externalId: { not: null } },
+          select: { id: true, publishedAt: true, account: { select: { name: true, kind: true } }, post: { select: { text: true, brandId: true } } },
+        })
+      : null;
+  const targetRows = extraTarget ? [...targets, extraTarget] : targets;
+  const extraPost =
+    kind === "AD" && initial && !posts.some((p) => p.id === initial)
+      ? await db.post.findFirst({
+          where: { id: initial, status: { not: "CANCELLED" } },
+          select: { id: true, text: true, brandId: true, status: true, media: { take: 1, orderBy: { position: "asc" }, select: { storageKey: true } } },
+        })
+      : null;
+  const postRows = extraPost ? [...posts, extraPost] : posts;
+
   const monthSpent = await monthSpendByAccount(adAccounts);
   const accounts: AccountOption[] = adAccounts.map((a) => ({
     id: a.id,
@@ -75,14 +103,14 @@ export default async function NewPromotionPage({ searchParams }: PageProps<"/anu
     brandId: a.brandId,
     blocked: blockedReason(a),
   }));
-  const boosts: BoostOption[] = targets.map((t) => ({
+  const boosts: BoostOption[] = targetRows.map((t) => ({
     targetId: t.id,
     brandId: t.post.brandId,
     label: `${excerpt(t.post.text, 70)} · ${t.account.kind === "INSTAGRAM_PROFILE" ? "Instagram" : "Facebook"} ${t.account.name}${t.publishedAt ? ` · ${dayFmt.format(t.publishedAt)}` : ""}`,
   }));
   // La imagen cuenta si esta registrada Y su archivo esta en este servidor (si no, hay que restaurarla).
-  const fileThere = await Promise.all(posts.map((p) => (p.media[0] ? imageExists(p.media[0].storageKey) : Promise.resolve(false))));
-  const postOptions: PostOption[] = posts.map((p, i) => {
+  const fileThere = await Promise.all(postRows.map((p) => (p.media[0] ? imageExists(p.media[0].storageKey) : Promise.resolve(false))));
+  const postOptions: PostOption[] = postRows.map((p, i) => {
     const registered = p.media.length > 0;
     const imageMissing = registered && !fileThere[i];
     return {
@@ -95,6 +123,30 @@ export default async function NewPromotionPage({ searchParams }: PageProps<"/anu
     };
   });
   const pages: PageOption[] = pageAccounts.map((p) => ({ id: p.id, name: p.name, brandId: p.brandId as string }));
+
+  const copyAccount = copy ? adAccounts.find((a) => a.id === copy.adAccountId) : null;
+  const copyCreative = copy ? (copy.creative as unknown as Partial<CreativeInput>) : null;
+  const copyForm = copy
+    ? {
+        accountId: copy.adAccountId,
+        objective: copy.objective,
+        name: copy.name,
+        budgetText: String(Number(copy.dailyBudget)),
+        days: copy.durationDays,
+        targeting: copy.targeting as unknown as Targeting,
+        message: copyCreative?.message ?? "",
+        headline: copyCreative?.headline ?? "",
+        link: copyCreative?.link ?? "",
+        cta: copyCreative?.cta ?? "LEARN_MORE",
+      }
+    : undefined;
+  const copyNotice = copy
+    ? {
+        error: copy.error,
+        hints: failureHints(copy.error, { dailyCap: copyAccount?.dailyBudgetCap == null ? null : Number(copyAccount.dailyBudgetCap), currency: copyAccount?.currency ?? "" }),
+        sourceGone: !initial,
+      }
+    : undefined;
 
   const tab = (href: string, label: string, active: boolean) => (
     <Link
@@ -113,18 +165,20 @@ export default async function NewPromotionPage({ searchParams }: PageProps<"/anu
           ← Anuncios creados
         </Link>
       </p>
-      <PageHeader title="Crear anuncio" description="Facebook e Instagram. Se crea en pausa y lo activa quien aprueba; nunca pasa del tope diario de la cuenta." />
-      <div role="group" aria-label="Tipo de anuncio" className="mb-6 inline-flex rounded-lg border border-border bg-surface p-0.5 text-sm">
-        {tab("/anuncios/nuevo?tipo=impulsar", "Impulsar una publicación", kind === "BOOST")}
-        {tab("/anuncios/nuevo?tipo=anuncio", "Anuncio nuevo", kind === "AD")}
-      </div>
+      <PageHeader title={copy ? "Crear de nuevo un anuncio" : "Crear anuncio"} description="Facebook e Instagram. Se crea en pausa y lo activa quien aprueba; nunca pasa del tope diario de la cuenta." />
+      {!copy && (
+        <div role="group" aria-label="Tipo de anuncio" className="mb-6 inline-flex rounded-lg border border-border bg-surface p-0.5 text-sm">
+          {tab("/anuncios/nuevo?tipo=impulsar", "Impulsar una publicación", kind === "BOOST")}
+          {tab("/anuncios/nuevo?tipo=anuncio", "Anuncio nuevo", kind === "AD")}
+        </div>
+      )}
       {kind === "BOOST" ? (
         <p className="mb-4 max-w-2xl text-sm text-muted">Promociona una publicación que ya salió en tu página o en tu Instagram para que más gente la vea o interactúe con ella.</p>
       ) : (
         <p className="mb-4 max-w-2xl text-sm text-muted">Arma un anuncio con el texto y la imagen de una publicación, con enlace y botón. No se publica en tu página: solo existe como anuncio.</p>
       )}
       <Card className="border-0 bg-transparent">
-        <PromotionForm key={kind} kind={kind} accounts={accounts} boosts={boosts} posts={postOptions} pages={pages} initialSourceId={initial} />
+        <PromotionForm key={`${kind}-${copyId ?? ""}`} kind={kind} accounts={accounts} boosts={boosts} posts={postOptions} pages={pages} initialSourceId={initial} initial={copyForm} copyNotice={copyNotice} />
       </Card>
     </>
   );

@@ -235,6 +235,7 @@ Además de **ver** el rendimiento, la sección **Anuncios** permite **crear y ad
 - **Anuncio nuevo** con el texto y la imagen de una publicación (sin publicarla en tu página), con titular, enlace y botón. Objetivos: visitas al sitio, alcance o interacción.
 - **Segmentación**: países, ciudades con radio, edad, género e **intereses** (se buscan en Meta mientras escribes).
 - **Campañas en Meta**: lo que ya existe en la cuenta (también lo creado directamente en Meta): pausar, activar (solo si el gasto diario cabe en el tope) y cambiar el presupuesto diario.
+- **Crear de nuevo** un anuncio que quedó en «No se pudo crear»: la lista y la ficha traen el botón; abre el formulario con los mismos datos y un aviso de qué corregir (por ejemplo, subir el presupuesto por encima del mínimo de Meta sin pasar del tope, o restaurar primero la imagen perdida). Crea un anuncio nuevo, en pausa y con todas las comprobaciones; el intento fallido queda como historial y quien aprueba puede **descartarlo**. Como el fallo se deshizo en Meta, no se gastó nada.
 
 **Quién puede qué:** Editor crea y pausa · Aprobador activa, cambia presupuestos y archiva · Administrador todo y fija los topes · Solo lectura ve.
 

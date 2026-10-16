@@ -103,7 +103,14 @@ export function PromotionActions({
         {status === "ACTIVE" && (canCreate || canApprove) && <ActionForm action={pausePromotionAction} id={id} label="Pausar" pendingText="Pausando…" />}
         {live && (canCreate || canApprove) && <ActionForm action={syncPromotionAction} id={id} label="Actualizar estado" pendingText="Leyendo en Meta…" />}
         {status !== "ARCHIVED" && status !== "CREATING" && canApprove && (
-          <ActionForm action={archivePromotionAction} id={id} label="Archivar" pendingText="Archivando…" variant="danger" confirm="El anuncio se pausa y se archiva en Meta (se conservan sus cifras). ¿Archivar?" />
+          <ActionForm
+            action={archivePromotionAction}
+            id={id}
+            label={status === "FAILED" ? "Descartar" : "Archivar"}
+            pendingText={status === "FAILED" ? "Descartando…" : "Archivando…"}
+            variant="danger"
+            confirm={status === "FAILED" ? "Queda como archivado y ya no se puede crear de nuevo desde aquí (no quedó nada creado en Meta). ¿Descartar?" : "El anuncio se pausa y se archiva en Meta (se conservan sus cifras). ¿Archivar?"}
+          />
         )}
       </div>
       {live && canApprove && <BudgetForm id={id} budget={budget} currency={currency} cap={cap} />}

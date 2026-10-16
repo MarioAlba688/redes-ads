@@ -50,7 +50,8 @@ export function classifyAdsError(e: unknown): AdsFailure {
       retryable: false,
     };
   }
-  if (/budget|presupuesto/i.test(e.message) && /minimum|mínimo|minimo|too low|bajo|menor/i.test(e.message)) {
+  // Meta responde en el idioma de la persona: «debe ser de más de $ 3.322» / «must be more than 3322» / «minimum budget».
+  if (/budget|presupuesto/i.test(e.message) && /minimum|mínimo|minimo|too low|bajo|menor|más de|mas de|more than|at least/i.test(e.message)) {
     return {
       message: `El presupuesto es menor que el mínimo que Meta permite para esta cuenta y esta duración. Súbelo un poco.${detail(e)}`,
       expired: false,

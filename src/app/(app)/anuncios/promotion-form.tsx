@@ -50,6 +50,23 @@ const excerpt = (text: string, max: number) => {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 };
 
+/** Datos con los que arranca el formulario al «crear de nuevo» un anuncio que no se pudo crear. */
+export type FormInitial = {
+  accountId: string;
+  objective: PromotionObjectiveName;
+  name: string;
+  budgetText: string;
+  days: number;
+  targeting: Targeting;
+  message: string;
+  headline: string;
+  link: string;
+  cta: CtaType;
+};
+
+/** Por que fallo el anuncio original y que corregir. */
+export type CopyNotice = { error: string | null; hints: string[]; sourceGone: boolean };
+
 export function PromotionForm({
   kind,
   accounts,
@@ -57,6 +74,8 @@ export function PromotionForm({
   posts,
   pages,
   initialSourceId,
+  initial,
+  copyNotice,
 }: {
   kind: PromotionKindName;
   accounts: AccountOption[];
@@ -64,6 +83,8 @@ export function PromotionForm({
   posts: PostOption[];
   pages: PageOption[];
   initialSourceId: string | null;
+  initial?: FormInitial;
+  copyNotice?: CopyNotice;
 }) {
   const [state, action, pending] = useActionState(createPromotionAction, undefined);
 
@@ -74,7 +95,7 @@ export function PromotionForm({
 
   // La cuenta publicitaria por defecto es la de la marca de la publicacion; si no hay, la primera que se pueda usar.
   const usable = accounts.filter((a) => !a.blocked);
-  const [accountPick, setAccountPick] = useState<string>("");
+  const [accountPick, setAccountPick] = useState<string>(initial?.accountId ?? "");
   const accountId = accountPick || (usable.find((a) => a.brandId && a.brandId === source?.brandId) ?? usable[0])?.id || "";
   const account = accounts.find((a) => a.id === accountId) ?? null;
 
@@ -83,18 +104,18 @@ export function PromotionForm({
   const pageAccountId = pageChoices.some((p) => p.id === pagePick) ? pagePick : (pageChoices[0]?.id ?? "");
 
   const objectives = OBJECTIVES_BY_KIND[kind];
-  const [objective, setObjective] = useState<PromotionObjectiveName>(objectives[0]);
-  const [nameEdit, setNameEdit] = useState<string | null>(null);
+  const [objective, setObjective] = useState<PromotionObjectiveName>(initial && objectives.includes(initial.objective) ? initial.objective : objectives[0]);
+  const [nameEdit, setNameEdit] = useState<string | null>(initial?.name ?? null);
   const autoName = source ? `${kind === "BOOST" ? "Impulso" : "Anuncio"}: ${excerpt(source.label.split(" · ")[0], 60)}` : "";
   const name = nameEdit ?? autoName;
-  const [budgetText, setBudgetText] = useState("");
-  const [days, setDays] = useState(7);
-  const [targeting, setTargeting] = useState<Targeting>(DEFAULT_TARGETING);
-  const [messageEdit, setMessageEdit] = useState<string | null>(null);
+  const [budgetText, setBudgetText] = useState(initial?.budgetText ?? "");
+  const [days, setDays] = useState(initial?.days ?? 7);
+  const [targeting, setTargeting] = useState<Targeting>(initial?.targeting ?? DEFAULT_TARGETING);
+  const [messageEdit, setMessageEdit] = useState<string | null>(initial && initial.message ? initial.message : null);
   const message = messageEdit ?? post?.text ?? "";
-  const [headline, setHeadline] = useState("");
-  const [link, setLink] = useState("");
-  const [cta, setCta] = useState<CtaType>("LEARN_MORE");
+  const [headline, setHeadline] = useState(initial?.headline ?? "");
+  const [link, setLink] = useState(initial?.link ?? "");
+  const [cta, setCta] = useState<CtaType>(initial?.cta ?? "LEARN_MORE");
   const [showErrors, setShowErrors] = useState(false);
 
   const currency = account?.currency ?? null;
@@ -170,6 +191,20 @@ export function PromotionForm({
 
   return (
     <form onSubmit={submit} className="space-y-6" noValidate>
+      {copyNotice && (
+        <Alert tone="warning">
+          <p className="font-medium">Estás creando de nuevo un anuncio que no se pudo crear. Corrige lo que falló y envíalo.</p>
+          {copyNotice.error && <p className="mt-1">Lo que dijo la vez anterior: {copyNotice.error}</p>}
+          {copyNotice.hints.length > 0 && (
+            <ul className="mt-1 list-disc space-y-0.5 pl-5">
+              {copyNotice.hints.map((h) => (
+                <li key={h}>{h}</li>
+              ))}
+            </ul>
+          )}
+          {copyNotice.sourceGone && <p className="mt-1">La publicación de origen ya no existe: elige otra.</p>}
+        </Alert>
+      )}
       <Alert tone="success">
         El anuncio se crea <strong>en pausa</strong>: no gasta nada hasta que una persona con permiso de aprobar lo active. El presupuesto nunca puede pasar del tope que fijó el administrador para la cuenta.
       </Alert>

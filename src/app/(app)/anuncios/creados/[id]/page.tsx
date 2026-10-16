@@ -2,12 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
-import { Alert, Badge, Card, PageHeader } from "@/components/ui";
+import { Alert, Badge, Card, PageHeader, buttonClass } from "@/components/ui";
 import { requireUser } from "@/lib/auth/dal";
 import { db } from "@/lib/db";
 import { dateTimeFormat } from "@/lib/display-time";
 import { formatMoney } from "@/lib/format";
 import { mediaPath } from "@/lib/media";
+import { failureHints } from "@/lib/promotions/hints";
 import { can } from "@/lib/permissions";
 import { describeTargeting } from "@/lib/promotions/targeting";
 import {
@@ -67,6 +68,7 @@ export default async function PromotionPage({ params, searchParams }: PageProps<
   const creative = p.creative as unknown as CreativeInput;
   const total = maxTotalSpend(budget, p.durationDays, p.currency);
   const canCreate = can(user.role, "ads.create");
+  const hints = status === "FAILED" ? failureHints(p.error, { dailyCap: cap, currency: p.currency }) : [];
   const canApprove = can(user.role, "ads.approve");
   const ended = status === "ACTIVE" && p.endsAt !== null && p.endsAt.getTime() < nowMs();
 
@@ -96,7 +98,16 @@ export default async function PromotionPage({ params, searchParams }: PageProps<
       )}
       {status === "FAILED" && p.error && (
         <div className="mb-4">
-          <Alert>{p.error}</Alert>
+          <Alert>
+            <p>{p.error}</p>
+            {hints.length > 0 && (
+              <ul className="mt-2 list-disc space-y-0.5 pl-5">
+                {hints.map((h) => (
+                  <li key={h}>{h}</li>
+                ))}
+              </ul>
+            )}
+          </Alert>
         </div>
       )}
       {status === "PAUSED" && p.error && (
@@ -160,6 +171,21 @@ export default async function PromotionPage({ params, searchParams }: PageProps<
           </p>
         )}
       </Card>
+
+      {(canCreate || canApprove) && status === "FAILED" && (
+        <Card className="mt-6 p-5">
+          <h2 className="mb-3 font-semibold">Acciones</h2>
+          <div className="flex flex-wrap items-start gap-3">
+            {canCreate && (
+              <Link href={`/anuncios/nuevo?copiar=${p.id}`} className={buttonClass("primary")}>
+                Crear de nuevo con estos datos
+              </Link>
+            )}
+            {canApprove && <PromotionActions id={p.id} status={status} canCreate={canCreate} canApprove={canApprove} budget={budget} currency={p.currency} cap={cap} days={p.durationDays} />}
+          </div>
+          <p className="mt-3 text-sm text-muted">No quedó nada creado en Meta, así que no se gastó nada. «Crear de nuevo» abre el formulario con los mismos datos para corregir lo que falló.</p>
+        </Card>
+      )}
 
       {(canCreate || canApprove) && status !== "FAILED" && (
         <Card className="mt-6 p-5">

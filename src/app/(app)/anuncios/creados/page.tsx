@@ -107,6 +107,13 @@ export default async function CreatedPromotionsPage() {
                     </td>
                     <td className="px-5 py-3">
                       <Badge tone={STATUS_TONES[r.status as PromotionStatusName]}>{STATUS_LABELS[r.status as PromotionStatusName]}</Badge>
+                      {r.status === "FAILED" && canCreate && (
+                        <p className="mt-1">
+                          <Link href={`/anuncios/nuevo?copiar=${r.id}`} className="text-xs font-medium text-primary hover:underline">
+                            Crear de nuevo
+                          </Link>
+                        </p>
+                      )}
                       {r.effectiveStatus && r.status !== "FAILED" && r.status !== "ARCHIVED" && (
                         <p className="mt-1">
                           <Badge tone={effectiveStatusTone(r.effectiveStatus)}>Meta: {effectiveStatusLabel(r.effectiveStatus)}</Badge>

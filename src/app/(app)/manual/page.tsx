@@ -607,9 +607,17 @@ export default async function ManualPage() {
                 Se arregla en Meta, no en la app: en el <Ext href="https://adsmanager.facebook.com">Administrador de anuncios</Ext> → <UI>Facturación y pagos</UI> agrega o corrige el método de pago, o acepta los términos pendientes. Luego vuelve a intentarlo.
               </p>
             </Problem>
-            <Problem message="«El presupuesto es menor que el mínimo que Meta permite…»">
+            <Problem message="«El presupuesto es menor que el mínimo que Meta permite…» / «El presupuesto del conjunto de anuncios debe ser de más de $ …»">
               <p>
-                Meta exige un mínimo diario que depende de la moneda y de la duración. Sube el presupuesto un poco (sin pasar del tope de la cuenta).
+                Meta exige un mínimo diario que depende de la moneda y de la duración, y lo dice en el detalle del error (por ejemplo «más de $ 3.322»). Sube el presupuesto un poco, sin pasar del tope de la cuenta: si el mínimo de Meta es mayor que el tope, pídele al administrador que suba el tope en Cuentas.
+              </p>
+              <p>
+                No tienes que escribir todo otra vez: abre el anuncio en <UI>Anuncios → Creados en la app</UI> y pulsa <UI>Crear de nuevo</UI> (lo ves junto a los que dicen «No se pudo crear»). El formulario se abre con los mismos datos y un aviso de qué corregir.
+              </p>
+            </Problem>
+            <Problem message="Un anuncio quedó en «No se pudo crear»: ¿lo vuelvo a publicar?">
+              <p>
+                Un anuncio que no se pudo crear <em>no cuesta nada</em>: la app borra de Meta lo que alcanzó a crear, así que no queda ninguna campaña ni gasto. Arregla lo que dice su ficha (el presupuesto, la imagen, el método de pago…) y pulsa <UI>Crear de nuevo con estos datos</UI>: se crea un anuncio nuevo, en pausa, que lo activa quien aprueba. El intento fallido queda en la lista como historial; quien aprueba puede <UI>Descartarlo</UI> para dejarlo archivado. Si el motivo fue una imagen perdida, primero restáurala (ver «No se encontró el archivo de la imagen en este servidor»).
               </p>
             </Problem>
             <Problem message="«Meta registró un presupuesto diario de … Por seguridad se canceló la creación» / «Meta no dejó el anuncio en pausa»">
