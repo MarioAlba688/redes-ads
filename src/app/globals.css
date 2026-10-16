@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f6f7f9;
+  --surface: #ffffff;
+  --border: #e4e7ec;
+  --foreground: #101828;
+  --muted: #667085;
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-foreground: #ffffff;
+  --danger: #d92d20;
+  --danger-bg: #fef3f2;
+  --success: #067647;
+  --success-bg: #ecfdf3;
+  --warning: #b54708;
+  --warning-bg: #fffaeb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0b0d12;
+    --surface: #14171f;
+    --border: #262b36;
+    --foreground: #eef0f4;
+    --muted: #98a2b3;
+    --primary: #6366f1;
+    --primary-hover: #818cf8;
+    --primary-foreground: #ffffff;
+    --danger: #f97066;
+    --danger-bg: #2a1311;
+    --success: #47cd89;
+    --success-bg: #0d2a1c;
+    --warning: #fdb022;
+    --warning-bg: #2b1d08;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}

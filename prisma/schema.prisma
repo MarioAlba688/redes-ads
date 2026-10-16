@@ -1,0 +1,337 @@
+// Esquema de base de datos (MySQL 8).
+// Despues de cambiarlo: npm run db:migrate -- --name descripcion_del_cambio
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+// ---------------------------------------------------------------------------
+// Equipo y acceso
+// ---------------------------------------------------------------------------
+
+enum Role {
+  ADMIN // todo, incluido el equipo y las cuentas conectadas
+  EDITOR // crea y edita borradores de publicaciones
+  APPROVER // aprueba publicaciones y ve metricas
+  VIEWER // solo lectura
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  role         Role      @default(VIEWER)
+  active       Boolean   @default(true)
+  failedLogins Int       @default(0)
+  lockedUntil  DateTime?
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions          Session[]
+  invitationsSent   Invitation[]    @relation("InvitedBy")
+  auditLogs         AuditLog[]
+  connectedAccounts SocialAccount[]
+  postsCreated      Post[]          @relation("PostCreator")
+  postsReviewed     Post[]          @relation("PostReviewer")
+  aiGenerations     AiGeneration[]
+}
+
+// Sesion de login. En la cookie viaja un token aleatorio; aqui solo se guarda su hash.
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  userAgent String?  @db.VarChar(255)
+  ip        String?  @db.VarChar(64)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// Invitacion para sumar a alguien al equipo. El link se muestra una sola vez.
+model Invitation {
+  id          String    @id @default(cuid())
+  email       String
+  role        Role
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  invitedById String?
+  invitedBy   User?     @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+
+  @@index([email])
+}
+
+// Historial de quien hizo que.
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String   @db.VarChar(64)
+  target    String?  @db.VarChar(191)
+  detail    Json?
+  ip        String?  @db.VarChar(64)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Cuentas conectadas (anuncios y perfiles). La conexion OAuth llega en la Fase 2.
+// ---------------------------------------------------------------------------
+
+enum Platform {
+  META
+  GOOGLE_ADS
+  TIKTOK
+  LINKEDIN
+}
+
+enum AccountKind {
+  AD_ACCOUNT // cuenta publicitaria (anuncios pagados)
+  FACEBOOK_PAGE // pagina de Facebook (publicacion organica)
+  INSTAGRAM_PROFILE // cuenta profesional de Instagram (publicacion organica)
+  SOCIAL_PROFILE // pagina / perfil de otras plataformas (TikTok, LinkedIn)
+}
+
+enum ConnectionStatus {
+  ACTIVE
+  EXPIRED // el token caduco: hay que reconectar
+  ERROR
+  REVOKED
+}
+
+model SocialAccount {
+  id              String           @id @default(cuid())
+  platform        Platform
+  kind            AccountKind
+  externalId      String           @db.VarChar(191)
+  name            String
+  handle          String?
+  status          ConnectionStatus @default(ACTIVE)
+  // Tokens cifrados con AES-256-GCM (ver src/lib/crypto.ts). Nunca en texto plano.
+  accessTokenEnc  String?          @db.Text
+  refreshTokenEnc String?          @db.Text
+  tokenExpiresAt  DateTime?
+  scopes          String?          @db.Text
+  // Cuentas publicitarias: moneda y zona horaria (las fechas de los reportes van en esa zona).
+  currency        String?          @db.VarChar(8)
+  timezone        String?          @db.VarChar(64)
+  // Datos propios de cada plataforma (ej. Meta: pageId de una cuenta de Instagram, estado de la cuenta).
+  metadata        Json?
+  lastSyncedAt    DateTime?
+  lastError       String?          @db.Text
+  connectedById   String?
+  connectedBy     User?            @relation(fields: [connectedById], references: [id], onDelete: SetNull)
+  // Marca a la que pertenece la cuenta (una pagina, un Instagram y su cuenta publicitaria suelen ser de la misma marca).
+  brandId         String?
+  brand           Brand?           @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  insights    AdInsightDaily[]
+  postTargets PostTarget[]
+
+  @@unique([platform, kind, externalId])
+  @@index([platform])
+  @@index([brandId])
+}
+
+// Rendimiento diario por campaña de una cuenta publicitaria. Se reemplaza la ventana
+// sincronizada en cada sync (Meta restablece las cifras recientes durante ~28 dias).
+model AdInsightDaily {
+  id           String        @id @default(cuid())
+  accountId    String
+  account      SocialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  // Fecha en la zona horaria de la cuenta publicitaria (sin hora).
+  date         DateTime      @db.Date
+  campaignId   String        @db.VarChar(64)
+  campaignName String
+  spend        Decimal       @db.Decimal(14, 4)
+  impressions  BigInt
+  clicks       BigInt
+  // Personas alcanzadas ese dia. NO se puede sumar entre dias (se repiten personas).
+  reach        BigInt
+  // Acciones (compras, leads, mensajes...) como { tipo: cantidad }.
+  actions      Json?
+
+  @@unique([accountId, date, campaignId])
+  @@index([date])
+}
+
+// ---------------------------------------------------------------------------
+// Marcas y publicaciones (Fase 3)
+// ---------------------------------------------------------------------------
+
+// Cada marca (Smartec, Reservi...) tiene su propia voz. Es lo que lee la IA al redactar.
+model Brand {
+  id           String   @id @default(cuid())
+  name         String   @db.VarChar(120)
+  // Que hace el negocio, en palabras de su dueño.
+  description  String   @db.Text
+  audience     String?  @db.Text
+  // Como suena la marca: cercana, formal, divertida...
+  tone         String?  @db.Text
+  language     String   @default("es") @db.VarChar(8)
+  // Productos, servicios y ofertas que se pueden mencionar (la IA no inventa otros).
+  products     String?  @db.Text
+  // Palabras o temas que nunca deben aparecer (uno por linea).
+  avoid        String?  @db.Text
+  hashtags     String?  @db.Text
+  callToAction String?  @db.VarChar(300)
+  // Zona horaria con la que se programan las publicaciones.
+  timezone     String   @default("America/Bogota") @db.VarChar(64)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  accounts      SocialAccount[]
+  posts         Post[]
+  aiGenerations AiGeneration[]
+}
+
+enum PostStatus {
+  DRAFT // borrador (editable)
+  IN_REVIEW // esperando aprobacion
+  APPROVED // aprobada, sin fecha
+  SCHEDULED // aprobada y con fecha: la publica el proceso en segundo plano
+  PUBLISHING // publicandose ahora
+  PUBLISHED // publicada en todos los destinos
+  PARTIAL // publicada en algunos destinos y fallo en otros
+  FAILED // no se pudo publicar en ninguno
+  CANCELLED // cancelada
+}
+
+model Post {
+  id           String     @id @default(cuid())
+  brandId      String
+  brand        Brand      @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  // Texto final tal como saldra, hashtags incluidos.
+  text         String     @db.Text
+  linkUrl      String?    @db.VarChar(500)
+  status       PostStatus @default(DRAFT)
+  // Momento de publicacion (UTC). Solo tiene sentido en SCHEDULED.
+  scheduledAt  DateTime?
+  createdById  String?
+  createdBy    User?      @relation("PostCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  submittedAt  DateTime?
+  reviewedById String?
+  reviewedBy   User?      @relation("PostReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
+  // Nota de quien aprobo o rechazo.
+  reviewNote   String?    @db.Text
+  aiGenerated  Boolean    @default(false)
+  // Lo que se le pidio a la IA (para saber de donde salio el texto).
+  aiBrief      String?    @db.Text
+  publishedAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  targets PostTarget[]
+  media   PostMedia[]
+
+  @@index([status, scheduledAt])
+  @@index([brandId])
+  @@index([createdAt])
+}
+
+enum TargetStatus {
+  PENDING
+  PUBLISHING
+  PUBLISHED
+  FAILED
+}
+
+// Un destino de una publicacion: una pagina de Facebook o una cuenta de Instagram.
+// Cada uno se publica (y falla o reintenta) por separado.
+model PostTarget {
+  id            String        @id @default(cuid())
+  postId        String
+  post          Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  accountId     String
+  account       SocialAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  status        TargetStatus  @default(PENDING)
+  attempts      Int           @default(0)
+  // Cuando reintentar tras un fallo temporal.
+  nextAttemptAt DateTime?
+  // Reserva del proceso que lo esta publicando (evita que dos lo publiquen a la vez).
+  lockedAt      DateTime?
+  externalId    String?       @db.VarChar(191)
+  externalUrl   String?       @db.VarChar(500)
+  publishedAt   DateTime?
+  error         String?       @db.Text
+
+  @@unique([postId, accountId])
+  @@index([status, nextAttemptAt])
+}
+
+// Imagen adjunta a una publicacion. El archivo vive en disco (storageKey); aqui solo sus datos.
+model PostMedia {
+  id           String   @id @default(cuid())
+  postId       String
+  post         Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  mimeType     String   @db.VarChar(64)
+  size         Int
+  width        Int?
+  height       Int?
+  // Nombre aleatorio del archivo en la carpeta de medios (no adivinable).
+  storageKey   String   @unique @db.VarChar(191)
+  originalName String?  @db.VarChar(255)
+  position     Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  @@index([postId])
+}
+
+// Cada llamada a la IA: sirve para ver el consumo y poner un limite diario por persona.
+model AiGeneration {
+  id           String   @id @default(cuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  brandId      String?
+  brand        Brand?   @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  // Motor de IA que se uso (anthropic | openai | gemini). Nulo en las generaciones anteriores a los varios motores.
+  provider     String?  @db.VarChar(20)
+  model        String   @db.VarChar(64)
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  ok           Boolean
+  error        String?  @db.VarChar(300)
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+}
+
+// Motores de IA que el equipo puede usar para escribir publicaciones (uno por proveedor). La clave la pone un
+// administrador desde la app y se guarda cifrada (AES-256-GCM): nunca se lee para mostrarla, solo para llamar a la API.
+model AiProvider {
+  id          String    @id @default(cuid())
+  // anthropic | openai | gemini. Texto (no enum) para poder sumar proveedores sin migrar.
+  provider    String    @unique @db.VarChar(20)
+  apiKeyEnc   String?   @db.Text
+  // Ultimos caracteres de la clave, para reconocerla en pantalla sin descifrarla. Tambien indica que hay una clave.
+  keyHint     String?   @db.VarChar(8)
+  model       String    @db.VarChar(120)
+  enabled     Boolean   @default(true)
+  // El que se propone primero en el editor. Solo uno a la vez.
+  isDefault   Boolean   @default(false)
+  // Resultado de la ultima prueba de conexion.
+  lastTestAt  DateTime?
+  lastTestOk  Boolean?
+  lastError   String?   @db.VarChar(300)
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
