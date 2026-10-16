@@ -15,6 +15,7 @@ Aplicación web para manejar en un solo lugar las cuentas publicitarias y las re
 - **Anuncios:** gasto, impresiones, clics, CTR, CPC y CPM por cuenta y campaña, con gráfica diaria, comparación con el periodo anterior y filtros de 7/30/90 días, por plataforma y por cuenta. Junta **Meta, Google Ads y TikTok Ads** (las monedas distintas nunca se suman; dentro de cada moneda hay un desglose por plataforma).
 - **Google Ads y TikTok Ads:** conexión por OAuth y descarga del rendimiento de las campañas, igual que Meta. Ver [Conectar Google Ads](#conectar-google-ads) y [Conectar TikTok Ads](#conectar-tiktok-ads).
 - Pantalla **Cuentas** con el estado de cada conexión, cuándo vence y botones de sincronizar y desconectar.
+- **Manual** (menú lateral, para todos los roles): la guía de Facebook e Instagram dentro de la app, paso a paso, con la dirección de retorno de tu `APP_URL` lista para copiar y los mensajes de error más frecuentes. A los administradores les añade el recuadro **Tu estado ahora**, que revisa la configuración real (app de Meta, permisos pedidos, cuentas conectadas, permiso de publicar, dirección pública para las imágenes de Instagram) y enlaza al paso que arregla cada aviso. Los avisos de Cuentas y de una publicación fallida también enlazan a la parte que corresponde.
 - **Marcas:** el perfil de cada negocio (qué hace, a quién le habla, tono, palabras prohibidas, hashtags, zona horaria) y qué páginas y cuentas de Instagram le pertenecen. De ahí salen la voz de la IA y los destinos de cada publicación.
 - **Publicaciones con IA:** la IA propone varias opciones de texto según la marca y lo que pidas; la persona elige, edita y añade una imagen. Ver [Publicar con IA](#publicar-con-ia-y-flujo-de-aprobación).
 - **Varios motores de IA:** Claude (Anthropic), GPT (OpenAI) y Gemini (Google). Un administrador pone la clave y el modelo de cada uno en **Motores de IA** (las claves se guardan cifradas) y cada persona elige con cuál escribir. Ver [Motores de IA](#motores-de-ia-claude-gpt-y-gemini).
@@ -77,6 +78,8 @@ Abre <http://localhost:3000>. Como no hay usuarios, te lleva a crear el administ
 
 La conexión usa OAuth: la persona que conecta inicia sesión en Facebook, acepta los permisos y la app guarda las cuentas que esa persona administra. Hay que crear una app propia en Meta (es gratis y no se publica en ninguna tienda).
 
+> Esta misma guía, más detallada y con tu configuración real, está en el menú **Manual** de la app.
+>
 > Las pantallas de Meta cambian con frecuencia; si algún nombre no coincide, busca el equivalente. La app se probó con un servidor de Meta simulado (ver [pruebas](#pruebas-de-extremo-a-extremo)), **no con credenciales reales**: la primera conexión real es la prueba final.
 
 **Antes de empezar**, la persona que conecte necesita:
@@ -240,6 +243,19 @@ DATABASE_URL="mysql://redes_app:CLAVE_CODIFICADA@IP_DEL_VPS:PUERTO/db-redes?ssla
 **5. Rendimiento.** La app consulta MySQL en cada petición (así la revocación de accesos es inmediata). Si la app corre lejos del VPS, cada página sumará la latencia de red varias veces; lo ideal es que la app y la base estén en el mismo servidor o en la misma región.
 
 **6. Copias de seguridad.** Programa un `mysqldump` diario en el VPS y guarda las copias fuera de ese servidor, por ejemplo: `mysqldump --single-transaction -u redes_app -p db-redes | gzip > redes-$(date +%F).sql.gz`.
+
+## Desplegar con Docker (Easypanel)
+
+El repo trae un `Dockerfile` listo. En Easypanel: **+ Service → App**, fuente GitHub (rama `main`) y, en **Build**, elige **Dockerfile**. Las variables van en la pestaña **Environment** (nunca dentro de la imagen) y son las mismas de la tabla de [Configurar la app](#2-configurar-la-app); `APP_URL` debe ser la dirección pública con `https://`.
+
+- **Migraciones:** el contenedor ejecuta `prisma migrate deploy` en cada arranque, antes de encender la app (no hace nada si ya están aplicadas). `RUN_MIGRATIONS=false` lo salta.
+- **Imágenes:** viven en `/data/media` (`MEDIA_DIR`). Crea un **Volume** en **Mounts** con esa ruta de montaje; sin él se pierden al redesplegar. Entra en las copias de seguridad.
+- **Puerto y dominio:** la app escucha en el `3000`; en **Domains & Proxy** añade tu dominio apuntando a ese puerto, con HTTPS.
+- **Una sola réplica:** el proceso que publica lo programado corre dentro de la app.
+- **Base de datos:** si MySQL es otro servicio de Easypanel, usa su host interno (`proyecto_servicio:3306`) y quita los `?ssl…` de la `DATABASE_URL`: así la app queda a milisegundos de la base.
+- **Después de desplegar:** añade `https://tu-dominio/api/meta/callback`, `/api/google/callback` y `/api/tiktok/callback` como URL de redirección en cada plataforma.
+
+Para probar la imagen en tu PC: `docker build -t redes .` y `docker run --env-file .env -p 3000:3000 -v redes-media:/data/media redes`.
 
 ## Comandos
 

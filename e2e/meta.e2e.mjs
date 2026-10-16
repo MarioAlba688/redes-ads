@@ -102,7 +102,7 @@ try {
   }
   // Variables vacias a proposito: la app de prueba no debe heredar del .env real ajustes de Meta
   // (permisos limitados, configuracion de Facebook Login for Business...).
-  const baseEnv = { DATABASE_URL: appDbUrl, SETUP_TOKEN, ENCRYPTION_KEY, E2E_DATABASE_URL: "", META_SCOPES: "", META_LOGIN_CONFIG_ID: "" };
+  const baseEnv = { DATABASE_URL: appDbUrl, SETUP_TOKEN, ENCRYPTION_KEY, E2E_DATABASE_URL: "", META_SCOPES: "", META_LOGIN_CONFIG_ID: "", MEDIA_PUBLIC_BASE_URL: "" };
 
   appA = startApp(APP_PORT, {
     ...baseEnv,
@@ -432,7 +432,8 @@ try {
   check("cada enlace del índice apunta a una sección que existe", (await page.locator('nav[aria-label="En esta guía"] a').evaluateAll((as, found) => as.every((a) => found.includes(a.getAttribute("href").slice(1))), ids)));
   const manual = norm(await page.locator("main").innerText());
   check("«Tu estado ahora» (solo administradores) lista lo que ve la app: app configurada, páginas, Instagram y permisos", manual.includes("Tu estado ahora") && manual.includes("La app de Meta está configurada en el servidor") && /15 página\(s\) de Facebook conectada\(s\)/.test(manual) && /5 cuenta\(s\) de Instagram conectada\(s\)/.test(manual) && manual.includes("Las cuentas conectadas tienen permiso para publicar"));
-  check("con la app en localhost avisa que Instagram aún no puede descargar las imágenes, y lleva al paso", manual.includes("Instagram no podrá descargar las imágenes todavía") && (await page.getByRole("link", { name: "Ver el paso" }).first().getAttribute("href")) === "#publicar-instagram");
+  const stepLinks = await page.getByRole("link", { name: "Ver el paso" }).evaluateAll((as) => as.map((a) => a.getAttribute("href")));
+  check("con la app en localhost avisa que Instagram aún no puede descargar las imágenes, y lleva al paso", manual.includes("Instagram no podrá descargar las imágenes todavía") && stepLinks.includes("#publicar-instagram"), `enlaces: ${stepLinks.join()}`);
   const uriBlock = page.locator("pre", { hasText: `${APP}/api/meta/callback` }).first();
   check("muestra la URI de redirección real de esta app, lista para pegar en Meta", (await uriBlock.innerText()).trim() === `${APP}/api/meta/callback`);
   await ctx.grantPermissions(["clipboard-read", "clipboard-write"], { origin: APP });
@@ -446,11 +447,34 @@ try {
   await v.goto(`${APP}/manual`);
   await v.getByRole("heading", { name: "Manual: Facebook e Instagram" }).waitFor();
   const viewerManual = await v.locator("main").innerText();
-  check("solo lectura ve la guía, pero no el estado de configuración del servidor", viewerManual.includes("1. La cuenta de Instagram") && !viewerManual.includes("Tu estado ahora"));
+  check("solo lectura ve la guía, pero no el estado de configuración del servidor", viewerManual.includes("1. La cuenta de Instagram") && (await v.getByRole("heading", { name: "Tu estado ahora" }).count()) === 0 && !viewerManual.includes("Tu estado ahora") && !viewerManual.includes("Ver el paso"));
   await page.goto(`${PLAIN}/manual`);
   const plainManual = norm(await page.locator("main").innerText());
   check("sin la app de Meta configurada, el estado dice qué falta primero", plainManual.includes("Falta configurar la app de Meta en el servidor") && /Pendiente/.test(plainManual));
   check("si MEDIA_PUBLIC_BASE_URL es la dirección de ejemplo copiada tal cual, lo detecta", plainManual.includes("parece el ejemplo del manual"));
+
+  if (SHOTS) {
+    fs.mkdirSync(SHOTS, { recursive: true });
+    await page.goto(`${APP}/manual`);
+    await page.getByRole("heading", { name: "Manual: Facebook e Instagram" }).waitFor();
+    await page.screenshot({ path: path.join(SHOTS, "manual-claro.png"), fullPage: true });
+    const dark = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: "dark" });
+    await dark.addCookies(await ctx.cookies());
+    const dp = await dark.newPage();
+    await dp.goto(`${APP}/manual`);
+    await dp.getByRole("heading", { name: "Manual: Facebook e Instagram" }).waitFor();
+    await dp.locator("details", { hasText: "Invalid Scopes" }).first().locator("summary").click();
+    await dp.screenshot({ path: path.join(SHOTS, "manual-oscuro.png"), fullPage: true });
+    const mob = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+    await mob.addCookies(await ctx.cookies());
+    const mp = await mob.newPage();
+    await mp.goto(`${APP}/manual`);
+    await mp.getByRole("heading", { name: "Manual: Facebook e Instagram" }).waitFor();
+    check("en el móvil el manual no tiene scroll horizontal", await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    await mp.screenshot({ path: path.join(SHOTS, "manual-movil.png"), fullPage: true });
+    await dark.close();
+    await mob.close();
+  }
 
   check("ninguna llamada a Meta salio sin firma valida durante toda la prueba", fake.requests().filter((r) => r.token).every((r) => r.proofOk));
 } catch (e) {

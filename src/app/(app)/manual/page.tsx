@@ -5,7 +5,7 @@ import { requireUser } from "@/lib/auth/dal";
 import { db } from "@/lib/db";
 import { env } from "@/lib/env";
 import { META_SCOPES } from "@/lib/meta/config";
-import { buildMetaDiagnostics, type CheckStatus } from "@/lib/meta/diagnostics";
+import { buildMetaDiagnostics, isLocalHost, type CheckStatus } from "@/lib/meta/diagnostics";
 import { can } from "@/lib/permissions";
 import { Callout, Code, Ext, Problem, Section, Step, Steps, UI } from "./parts";
 
@@ -37,6 +37,8 @@ export default async function ManualPage() {
   const e = env();
   const appUrl = e.APP_URL.replace(/\/$/, "");
   const redirectUri = `${appUrl}/api/meta/callback`;
+  // El tunel apunta al puerto en el que corre la app en este PC (el de APP_URL si es local; si no, el de `npm run dev`).
+  const localAddress = isLocalHost(new URL(appUrl).hostname) ? appUrl : "http://localhost:3000";
   const scopes = e.META_SCOPES ? e.META_SCOPES.split(",").map((s) => s.trim()).filter(Boolean) : [...META_SCOPES];
 
   // El diagnostico muestra la configuracion del servidor: solo para quien administra las cuentas (no incluye secretos).
@@ -273,12 +275,23 @@ export default async function ManualPage() {
           </ul>
           <h3 className="pt-2 text-sm font-semibold">La dirección pública</h3>
           <p className="text-sm leading-relaxed">Meta descarga la imagen desde internet, así que la app tiene que ser accesible con HTTPS. Tienes dos caminos:</p>
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-4">
             <div className="rounded-lg border border-border p-4 text-sm leading-relaxed">
               <p className="font-semibold">A. Servidor con dominio (recomendado)</p>
-              <p className="mt-1 text-muted">
-                La app en tu VPS con un dominio y HTTPS, y <code>APP_URL</code> con esa dirección. Es lo definitivo: también publica a su hora sin que tu computador esté encendido.
-              </p>
+              <p className="mt-1 text-muted">Es lo definitivo: también publica a su hora sin que tu computador esté encendido.</p>
+              <div className="mt-3">
+                <Steps>
+                  <Step>
+                    Pon la app en tu VPS detrás de un dominio con HTTPS (un proxy como Caddy o Nginx con certificado).
+                  </Step>
+                  <Step>
+                    En el <code>.env</code> del servidor, <code>APP_URL</code> es esa dirección (por ejemplo <code>https://redes.tu-dominio.com</code>, sin barra final). No hace falta <code>MEDIA_PUBLIC_BASE_URL</code>.
+                  </Step>
+                  <Step>
+                    En tu app de Meta, agrega <code className="break-all">https://redes.tu-dominio.com/api/meta/callback</code> (con tu dominio) a las <UI>URI de redireccionamiento de OAuth válidos</UI> (paso 2) y reinicia la app.
+                  </Step>
+                </Steps>
+              </div>
             </div>
             <div className="rounded-lg border border-border p-4 text-sm leading-relaxed">
               <p className="font-semibold">B. Túnel temporal (para probar)</p>
@@ -289,7 +302,7 @@ export default async function ManualPage() {
                 </Step>
                 <Step>
                   Con la app corriendo, en otra terminal:
-                  <Code text="cloudflared tunnel --url http://localhost:3000" />
+                  <Code text={`cloudflared tunnel --url ${localAddress}`} />
                   Imprime una dirección como <code>https://…-…-….trycloudflare.com</code>: es <UI>la tuya</UI>, cópiala completa.
                 </Step>
                 <Step>
@@ -305,7 +318,8 @@ export default async function ManualPage() {
           </div>
           <Callout tone="warning">
             <p>
-              <UI>Error típico:</UI> copiar la dirección de ejemplo de una guía en lugar de la que imprime tu túnel. Esa dirección no existe y Instagram responderá «no pudo descargar la imagen». Si estás en <UI>Tu estado ahora</UI> verás el aviso.
+              <UI>Error típico:</UI> copiar la dirección de ejemplo de una guía en lugar de la que imprime tu túnel. Esa dirección no existe y Instagram responderá «no pudo descargar la imagen».
+              {diagnostics && <> El recuadro «Tu estado ahora», arriba, avisa cuando detecta una dirección de ejemplo.</>}
             </p>
           </Callout>
         </Section>
