@@ -256,6 +256,14 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
                       <Link href="/estadisticas" className="text-primary hover:underline">
                         Ver estadísticas
                       </Link>
+                      {can(user.role, "ads.create") && (
+                        <>
+                          {" · "}
+                          <Link href={`/anuncios/nuevo?tipo=impulsar&destino=${t.id}`} className="text-primary hover:underline">
+                            Impulsar con un anuncio
+                          </Link>
+                        </>
+                      )}
                     </span>
                   )}
                   {t.error && (

@@ -9,6 +9,7 @@ import { env } from "@/lib/env";
  */
 export const META_SCOPES = [
   "ads_read", // leer cuentas publicitarias y su rendimiento
+  "ads_management", // crear y administrar anuncios (se crean siempre en pausa)
   // Sin este permiso, las paginas y cuentas publicitarias que pertenecen a un portafolio comercial
   // (Business Manager) y no al perfil de la persona no aparecen en /me/accounts ni en /me/adaccounts.
   "business_management",

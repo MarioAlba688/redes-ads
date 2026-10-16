@@ -25,6 +25,8 @@ const MATRIX = {
   "accounts.manage": ["ADMIN"],
   "metrics.view": ALL, // anuncios y estadisticas de las publicaciones
   "stats.refresh": ["ADMIN", "EDITOR", "APPROVER"], // volver a leer las estadisticas de lo publicado (llama a Meta)
+  "ads.create": ["ADMIN", "EDITOR"], // crear anuncios (siempre en pausa: no gastan) y pausarlos
+  "ads.approve": ["ADMIN", "APPROVER"], // activar, cambiar presupuesto y archivar: lo que mueve dinero
   "brands.view": ALL,
   "brands.manage": ["ADMIN", "EDITOR"], // perfil de voz de cada marca
   "content.view": ALL,

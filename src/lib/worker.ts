@@ -2,12 +2,14 @@ import "server-only";
 import { ADS_PLATFORMS, syncAdAccount } from "@/lib/ads/sync";
 import { db } from "@/lib/db";
 import { describeInternalError } from "@/lib/errors";
+import { syncDuePromotions } from "@/lib/promotions/service";
 import { runDuePublications } from "@/lib/publishing/run";
 import { refreshDueMetrics } from "@/lib/stats/refresh";
 
 // Proceso en segundo plano que vive dentro del servidor de la app (se arranca desde instrumentation.ts).
-// Cada vuelta: publica lo que ya toca y, de vez en cuando, actualiza el rendimiento de los anuncios y las
-// estadisticas de lo publicado (esto ultimo al final y con tiempo limitado: publicar a su hora es lo primero).
+// Cada vuelta: publica lo que ya toca y, de vez en cuando, actualiza el rendimiento de los anuncios, las
+// estadisticas de lo publicado y el estado de los anuncios creados desde la app (esto ultimo al final y con
+// tiempo limitado: publicar a su hora es lo primero).
 // Funciona en un servidor que se queda encendido (el VPS); no en plataformas "serverless".
 
 const ADS_SYNC_EVERY_MS = 6 * 60 * 60_000;
@@ -42,6 +44,7 @@ async function tick(state: WorkerState) {
     await runDuePublications();
     await syncStaleAdAccounts();
     await refreshDueMetrics();
+    await syncDuePromotions();
   } catch (e) {
     console.error("[worker] fallo una vuelta", describeInternalError(e));
   } finally {

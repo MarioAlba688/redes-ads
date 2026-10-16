@@ -1,4 +1,4 @@
-import { missingPublishScope, missingStatsScopes, PUBLISH_SCOPE, STATS_SCOPE } from "@/lib/meta/scopes";
+import { ADS_WRITE_SCOPE, missingAdsWriteScope, missingPublishScope, missingStatsScopes, PUBLISH_SCOPE, STATS_SCOPE } from "@/lib/meta/scopes";
 
 // Diagnostico de la configuracion de Meta (Facebook e Instagram) para la pagina Manual. Logica pura, sin servidor ni
 // base de datos: recibe lo que la pagina ya leyo y devuelve una lista de comprobaciones con su estado y que hacer.
@@ -15,7 +15,13 @@ export type DiagnosticCheck = {
   anchor?: string;
 };
 
-export type DiagnosticAccount = { kind: string; name: string; scopes: string | null };
+export type DiagnosticAccount = {
+  kind: string;
+  name: string;
+  scopes: string | null;
+  /** Cuentas publicitarias: tope de gasto diario por anuncio fijado por el administrador (null = sin fijar). */
+  dailyBudgetCap?: number | null;
+};
 
 export type DiagnosticInput = {
   /** Estan META_APP_ID y META_APP_SECRET en el servidor. */
@@ -40,6 +46,12 @@ const STATS_REQUESTED = [
 
 /** Textos de ejemplo que alguien pudo copiar tal cual del manual o de una guia en lugar de poner su direccion real. */
 const PLACEHOLDER_HOST = /palabras-al-azar|tu-direccion|tu-dominio|tudominio|ejemplo|example\.|nombre-raro/i;
+
+/** Nombres para una frase: los primeros `max` y «y N más» (una cuenta puede tener decenas de cuentas publicitarias). */
+export function nameList(names: readonly string[], max = 5): string {
+  if (names.length <= max) return names.join(", ");
+  return `${names.slice(0, max).join(", ")} y ${names.length - max} más`;
+}
 
 export function isLocalHost(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]" || hostname.endsWith(".local");
@@ -147,6 +159,43 @@ export function buildMetaDiagnostics(input: DiagnosticInput): DiagnosticCheck[] 
       status: "ok",
       title: "Se pueden leer las estadísticas de las publicaciones",
       detail: pages.length + instagram.length > 0 ? "Las cuentas conectadas tienen los permisos para leer vistas, alcance e interacciones." : "META_SCOPES incluye los permisos de estadísticas.",
+    });
+  }
+
+  // --- crear y administrar anuncios ---
+  const adAccounts = accounts.filter((a) => a.kind === "AD_ACCOUNT");
+  const adsNoScope = adAccounts.filter((a) => missingAdsWriteScope(a.scopes) !== null);
+  const adsNoCap = adAccounts.filter((a) => a.dailyBudgetCap === null || a.dailyBudgetCap === undefined);
+  if (!input.scopes.includes(ADS_WRITE_SCOPE)) {
+    checks.push({
+      id: "anuncios",
+      status: "warn",
+      title: "No se está pidiendo el permiso para crear anuncios",
+      detail: `Falta ${ADS_WRITE_SCOPE} en META_SCOPES: con ads_read solo se pueden ver las cifras. Agrégalo cuando tu app de Meta lo tenga habilitado, y reconecta.`,
+      anchor: "anuncios",
+    });
+  } else if (adsNoScope.length > 0) {
+    checks.push({
+      id: "anuncios",
+      status: "warn",
+      title: `${adsNoScope.length} cuenta(s) publicitaria(s) sin permiso para crear anuncios`,
+      detail: `${nameList(adsNoScope.map((a) => a.name))}. Agrega ${ADS_WRITE_SCOPE} en tu app de Meta y pulsa «Reconectar Meta»; hasta entonces solo se ven sus cifras.`,
+      anchor: "anuncios",
+    });
+  } else if (adsNoCap.length > 0) {
+    checks.push({
+      id: "anuncios",
+      status: "todo",
+      title: `${adsNoCap.length} cuenta(s) publicitaria(s) sin tope de gasto diario`,
+      detail: `${nameList(adsNoCap.map((a) => a.name))}. Fija el tope en Cuentas: sin él no se pueden crear ni activar anuncios desde la app.`,
+      anchor: "anuncios",
+    });
+  } else {
+    checks.push({
+      id: "anuncios",
+      status: "ok",
+      title: "Se pueden crear anuncios",
+      detail: adAccounts.length > 0 ? "Las cuentas publicitarias tienen el permiso y su tope de gasto diario." : "META_SCOPES incluye el permiso para crear anuncios.",
     });
   }
 

@@ -41,6 +41,8 @@ model User {
   postsCreated      Post[]          @relation("PostCreator")
   postsReviewed     Post[]          @relation("PostReviewer")
   aiGenerations     AiGeneration[]
+  promotionsCreated   AdPromotion[] @relation("PromotionCreator")
+  promotionsActivated AdPromotion[] @relation("PromotionActivator")
 }
 
 // Sesion de login. En la cookie viaja un token aleatorio; aqui solo se guarda su hash.
@@ -138,11 +140,15 @@ model SocialAccount {
   // Marca a la que pertenece la cuenta (una pagina, un Instagram y su cuenta publicitaria suelen ser de la misma marca).
   brandId         String?
   brand           Brand?           @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  // Cuentas publicitarias: tope de gasto diario por anuncio (en la moneda de la cuenta) que fija el administrador.
+  // Sin tope no se puede crear ni activar anuncios desde la app.
+  dailyBudgetCap  Decimal?         @db.Decimal(14, 2)
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
   insights    AdInsightDaily[]
   postTargets PostTarget[]
+  promotions  AdPromotion[]
 
   @@unique([platform, kind, externalId])
   @@index([platform])
@@ -199,6 +205,7 @@ model Brand {
   accounts      SocialAccount[]
   posts         Post[]
   aiGenerations AiGeneration[]
+  promotions    AdPromotion[]
 }
 
 enum PostStatus {
@@ -238,8 +245,9 @@ model Post {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  targets PostTarget[]
-  media   PostMedia[]
+  targets    PostTarget[]
+  media      PostMedia[]
+  promotions AdPromotion[]
 
   @@index([status, scheduledAt])
   @@index([brandId])
@@ -273,6 +281,7 @@ model PostTarget {
   error         String?       @db.Text
   // Ultima lectura de las estadisticas de lo publicado (ver PostTargetMetrics).
   metrics       PostTargetMetrics?
+  promotions    AdPromotion[]
 
   @@unique([postId, accountId])
   @@index([status, nextAttemptAt])
@@ -358,4 +367,77 @@ model AiProvider {
   updatedById String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Anuncios creados desde la app (Facebook e Instagram)
+// ---------------------------------------------------------------------------
+
+enum PromotionKind {
+  BOOST // impulsa una publicacion que ya esta publicada en una pagina o cuenta de Instagram
+  AD // anuncio nuevo hecho con el texto y la imagen de una publicacion, sin publicarla en la pagina
+}
+
+enum PromotionObjective {
+  AWARENESS // que mas gente lo vea (alcance)
+  TRAFFIC // visitas al sitio web
+  ENGAGEMENT // interaccion con la publicacion
+}
+
+enum PromotionStatus {
+  CREATING // se esta creando en Meta
+  PAUSED // creado en Meta y en pausa: no gasta nada hasta que alguien con permiso lo active
+  ACTIVE // activado desde la app
+  FAILED // no se pudo crear (lo que quedo a medias en Meta se borro)
+  ARCHIVED // archivado: ya no se gestiona desde la app
+}
+
+// Un anuncio hecho desde la app. En Meta son tres objetos (campaña, conjunto de anuncios y anuncio) que aqui se
+// tratan como uno solo. Se crean SIEMPRE en pausa; solo quien aprueba los activa, y nunca por encima del tope diario.
+model AdPromotion {
+  id              String             @id @default(cuid())
+  kind            PromotionKind
+  name            String             @db.VarChar(200)
+  objective       PromotionObjective
+  status          PromotionStatus    @default(CREATING)
+  // Estado real que informa Meta (effective_status del anuncio), para mostrarlo tal cual.
+  effectiveStatus String?            @db.VarChar(64)
+  adAccountId     String
+  adAccount       SocialAccount      @relation(fields: [adAccountId], references: [id], onDelete: Restrict)
+  brandId         String?
+  brand           Brand?             @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  // La publicacion de la que sale el anuncio. Si se borra (un borrador), el anuncio conserva su copia en `creative`.
+  postId          String?
+  post            Post?              @relation(fields: [postId], references: [id], onDelete: SetNull)
+  // Solo BOOST: el destino ya publicado que se impulsa (la pagina de Facebook o la cuenta de Instagram).
+  targetId        String?
+  target          PostTarget?        @relation(fields: [targetId], references: [id], onDelete: SetNull)
+  // Presupuesto diario en unidades normales de la moneda (50000 COP, 10.50 USD); a Meta se manda convertido con el
+  // offset de cada moneda (src/lib/promotions/currency.ts).
+  dailyBudget     Decimal            @db.Decimal(14, 2)
+  currency        String             @db.VarChar(8)
+  durationDays    Int
+  // A quien se le muestra: { countries, cities, ageMin, ageMax, genders, interests }.
+  targeting       Json
+  // Lo que se ve: { message, headline, link, cta, imageKey }.
+  creative        Json
+  metaCampaignId  String?            @db.VarChar(64)
+  metaAdSetId     String?            @db.VarChar(64)
+  metaCreativeId  String?            @db.VarChar(64)
+  metaAdId        String?            @db.VarChar(64)
+  // Cuando se activo y cuando termina (se fija al activar: la duracion cuenta desde ese momento).
+  activatedAt     DateTime?
+  endsAt          DateTime?
+  error           String?            @db.Text
+  lastSyncedAt    DateTime?
+  createdById     String?
+  createdBy       User?              @relation("PromotionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  activatedById   String?
+  activatedBy     User?              @relation("PromotionActivator", fields: [activatedById], references: [id], onDelete: SetNull)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([adAccountId, status])
+  @@index([status, lastSyncedAt])
+  @@index([createdAt])
 }

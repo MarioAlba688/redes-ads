@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: "Manual" };
 
 /** Permisos con los que funciona todo: anuncios, paginas, publicar en Facebook y en Instagram, y leer sus estadisticas. */
 const RECOMMENDED_SCOPES =
-  "ads_read,business_management,pages_show_list,pages_read_engagement,pages_read_user_content,pages_manage_posts,read_insights,instagram_basic,instagram_content_publish,instagram_manage_insights";
+  "ads_read,ads_management,business_management,pages_show_list,pages_read_engagement,pages_read_user_content,pages_manage_posts,read_insights,instagram_basic,instagram_content_publish,instagram_manage_insights";
 
 const TOC = [
   { id: "requisitos", label: "Antes de empezar" },
@@ -24,6 +24,7 @@ const TOC = [
   { id: "marcas", label: "5. Asignar a cada marca" },
   { id: "publicar-instagram", label: "6. Publicar en Instagram" },
   { id: "estadisticas", label: "7. Estadísticas de las publicaciones" },
+  { id: "anuncios", label: "8. Anuncios" },
   { id: "permisos", label: "Si falta el permiso de publicar" },
   { id: "problemas", label: "Mensajes frecuentes" },
 ];
@@ -52,11 +53,13 @@ export default async function ManualPage() {
         scopes,
         appUrl,
         mediaBaseUrl: e.MEDIA_PUBLIC_BASE_URL ?? null,
-        accounts: await db.socialAccount.findMany({
-          where: { platform: "META", status: { not: "REVOKED" } },
-          select: { kind: true, name: true, scopes: true },
-          orderBy: { name: "asc" },
-        }),
+        accounts: (
+          await db.socialAccount.findMany({
+            where: { platform: "META", status: { not: "REVOKED" } },
+            select: { kind: true, name: true, scopes: true, dailyBudgetCap: true },
+            orderBy: { name: "asc" },
+          })
+        ).map((a) => ({ ...a, dailyBudgetCap: a.dailyBudgetCap === null ? null : Number(a.dailyBudgetCap) })),
       })
     : null;
   const pending = diagnostics?.filter((c) => c.status !== "ok").length ?? 0;
@@ -93,10 +96,11 @@ export default async function ManualPage() {
                       {s.icon}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="font-medium">
+                      <p className="font-medium [overflow-wrap:anywhere]">
                         {c.title} <span className="sr-only">({s.label})</span>
                       </p>
-                      <p className="mt-0.5 text-muted">{c.detail}</p>
+                      {/* anywhere: un nombre de cuenta muy largo y sin espacios no debe ensanchar la pagina en el movil */}
+                      <p className="mt-0.5 text-muted [overflow-wrap:anywhere]">{c.detail}</p>
                     </div>
                     {c.status !== "ok" && c.anchor && (
                       <a href={`#${c.anchor}`} className="shrink-0 text-xs font-medium text-primary hover:underline">
@@ -187,7 +191,7 @@ export default async function ManualPage() {
                   <UI>Administrar mensajes y contenido en Instagram</UI>: para Instagram.
                 </li>
                 <li>
-                  Para ver anuncios, el caso de uso de la <UI>API de marketing</UI> (<code>ads_read</code>). Los de Threads, video en vivo, oEmbed o eventos no hacen falta.
+                  Para ver y crear anuncios, el caso de uso de la <UI>API de marketing</UI> (<code>ads_read</code> y <code>ads_management</code>). Los de Threads, video en vivo, oEmbed o eventos no hacen falta.
                 </li>
               </ul>
               Pulsa <UI>Guardar</UI>.
@@ -376,6 +380,74 @@ export default async function ManualPage() {
           </ul>
         </Section>
 
+        <Section
+          id="anuncios"
+          title="8. Anuncios: crear, activar y controlar el gasto"
+          intro="Desde Anuncios puedes impulsar publicaciones, armar anuncios nuevos y administrar las campañas de tu cuenta publicitaria. Crear anuncios gasta dinero de verdad: por eso todo nace en pausa y tiene un tope."
+        >
+          <Callout title="Cómo se protege el dinero">
+            <ul className="list-disc space-y-1 pl-5">
+              <li>
+                Todo anuncio se crea <UI>en pausa</UI>: no gasta nada hasta que una persona con permiso de <UI>aprobar</UI> lo active. Quien lo crea (Editor) no puede activarlo.
+              </li>
+              <li>
+                El administrador fija un <UI>tope de gasto diario por anuncio</UI> en cada cuenta publicitaria (en <Link href="/cuentas" className="font-medium text-primary hover:underline">Cuentas</Link>). Sin tope no se crea ni se activa nada, y ningún presupuesto puede pasarlo.
+              </li>
+              <li>Al activar, la app vuelve a leer el presupuesto que Meta tiene <em>en ese momento</em> y lo compara con el tope (alguien pudo cambiarlo en Meta).</li>
+              <li>Después de crear, comprueba con Meta que quedó en pausa y con el presupuesto pedido. Si algo no cuadra, lo borra y te avisa; si falla a medias, también borra lo que alcanzó a crear.</li>
+              <li>
+                Los presupuestos se escriben en la moneda de la cuenta y se convierten con la tabla oficial de Meta (el peso colombiano no lleva decimales: 50.000 son cincuenta mil). Una moneda que no esté en esa tabla se rechaza.
+              </li>
+            </ul>
+          </Callout>
+          <Steps>
+            <Step>
+              <UI>Permiso en Meta.</UI> Crear y administrar anuncios necesita <code>ads_management</code> (ver anuncios solo pide <code>ads_read</code>). En tu app de Meta, caso de uso de la <UI>API de marketing</UI>, comprueba en <UI>Permisos y funciones</UI> que aparece, agrégalo a{" "}
+              <code>META_SCOPES</code> (paso 3), reinicia y pulsa <UI>Reconectar Meta</UI>. Mientras la app esté en modo desarrollo funciona con tu usuario y tus cuentas; para usarla con cuentas de otras empresas Meta pide revisión.
+            </Step>
+            <Step>
+              <UI>La cuenta publicitaria lista en Meta.</UI> Tiene que tener un <UI>método de pago</UI> válido y los términos aceptados (<Ext href="https://adsmanager.facebook.com">Administrador de anuncios</Ext>). Tu usuario debe tener acceso a la cuenta (administrador o anunciante) y la <UI>página</UI> de la marca tiene que estar asignada a esa cuenta publicitaria en el portafolio (
+              <Ext href="https://business.facebook.com/settings">business.facebook.com/settings</Ext> → <UI>Cuentas → Páginas</UI> → <UI>Agregar socios</UI> / asignar la cuenta publicitaria). Para impulsar Instagram, la cuenta también debe estar en el portafolio y vinculada a esa página.
+            </Step>
+            <Step>
+              <UI>El administrador fija el tope</UI> de cada cuenta en <Link href="/cuentas" className="font-medium text-primary hover:underline">Cuentas</Link> (por ejemplo 50.000 COP al día).
+            </Step>
+            <Step>
+              <UI>Crear.</UI> En <Link href="/anuncios/creados" className="font-medium text-primary hover:underline">Anuncios → Creados en la app</Link>: <UI>Impulsar una publicación</UI> (una que ya salió en Facebook o Instagram; también desde su ficha en Publicaciones) o <UI>Anuncio nuevo</UI> (usa el texto y la imagen de una publicación, con enlace y botón, sin publicarla en tu página). Eliges objetivo, presupuesto por día, duración (1 a 30 días) y a quién se le muestra: países, ciudades con radio, edad, género e intereses buscados en Meta.
+            </Step>
+            <Step>
+              <UI>Aprobar y activar.</UI> Quien aprueba abre el anuncio y pulsa <UI>Activar anuncio</UI>: la app confirma cuánto puede gastar como máximo y la duración empieza a contar desde ese momento. Meta revisa el anuncio antes de mostrarlo; su estado («En revisión», «Rechazado»…) se ve en la ficha.
+            </Step>
+            <Step>
+              <UI>Controlar.</UI> Desde la ficha: <UI>Pausar</UI> (también quien lo creó: pausar nunca gasta), <UI>cambiar el presupuesto</UI> (sin pasar del tope) y <UI>archivar</UI>. En <Link href="/anuncios/campanas" className="font-medium text-primary hover:underline">Campañas en Meta</Link> ves y administras lo que ya existe en la cuenta, también lo creado directamente en Meta: pausar, activar (si cabe en el tope) y cambiar el presupuesto diario.
+            </Step>
+          </Steps>
+          <div className="grid gap-4 text-sm leading-relaxed md:grid-cols-2">
+            <div className="rounded-lg border border-border p-4">
+              <p className="font-semibold">Quién puede qué</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-muted">
+                <li>Editor: crea anuncios (en pausa) y los pausa.</li>
+                <li>Aprobador: activa, cambia presupuestos y archiva.</li>
+                <li>Administrador: todo, y fija el tope de cada cuenta.</li>
+                <li>Solo lectura: ve los anuncios y las campañas.</li>
+              </ul>
+            </div>
+            <div className="rounded-lg border border-border p-4">
+              <p className="font-semibold">Lo que no hace (todavía)</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-muted">
+                <li>Anuncios de empleo, vivienda, crédito o temas sociales y políticos: Meta les exige reglas propias.</li>
+                <li>Públicos en la Unión Europea (Meta pide datos adicionales, DSA).</li>
+                <li>Objetivos de ventas o clientes potenciales (necesitan píxel o formularios). Ni video ni carruseles.</li>
+              </ul>
+            </div>
+          </div>
+          <Callout tone="warning" title="Primera vez con una cuenta real">
+            <p>
+              La creación de anuncios se probó con un Meta simulado, no con una cuenta real: Meta cambia sus reglas seguido y puede rechazar alguna combinación. Como todo nace en pausa, un rechazo no cuesta dinero y la app te muestra el <em>Detalle de Meta</em> tal cual; pégalo para ajustarlo.
+            </p>
+          </Callout>
+        </Section>
+
         <Section id="permisos" title="Si la app dice que falta el permiso de publicar" intro="Pasa cuando la conexión con Meta se hizo sin pages_manage_posts (Facebook) o instagram_content_publish (Instagram). La app no deja aprobar ni publicar hasta arreglarlo.">
           <Steps>
             <Step>
@@ -452,6 +524,41 @@ export default async function ManualPage() {
             <Problem message="La publicación quedó «Publicada en parte» (salió en Facebook pero no en Instagram)">
               <p>
                 Cada destino se publica por separado. Arregla el motivo que aparece en el destino que falló y pulsa <UI>Reintentar los que fallaron</UI>: solo se repite el que falló, nunca se vuelve a publicar en Facebook.
+              </p>
+            </Problem>
+            <Problem message="«Esta cuenta publicitaria todavía no tiene un tope de gasto diario»">
+              <p>
+                Sin tope no se puede crear ni activar nada: es la protección principal del dinero. Pídele al administrador que lo fije en <Link href="/cuentas" className="font-medium text-primary hover:underline">Cuentas</Link> (campo «Tope de gasto diario por anuncio» de esa cuenta publicitaria).
+              </p>
+            </Problem>
+            <Problem message="«Meta rechazó la operación por falta de permisos… ads_management» (al crear o activar un anuncio)">
+              <p>
+                La conexión no incluye <code>ads_management</code>, o tu usuario no tiene acceso a la cuenta publicitaria o a la página. Sigue el paso 1 y 2 de la sección 8, reconecta y vuelve a intentarlo. Si la cuenta es de un portafolio comercial, tu usuario necesita rol de administrador o anunciante en esa cuenta.
+              </p>
+            </Problem>
+            <Problem message="«La cuenta publicitaria no tiene un método de pago válido» / «Hay términos de la cuenta publicitaria sin aceptar»">
+              <p>
+                Se arregla en Meta, no en la app: en el <Ext href="https://adsmanager.facebook.com">Administrador de anuncios</Ext> → <UI>Facturación y pagos</UI> agrega o corrige el método de pago, o acepta los términos pendientes. Luego vuelve a intentarlo.
+              </p>
+            </Problem>
+            <Problem message="«El presupuesto es menor que el mínimo que Meta permite…»">
+              <p>
+                Meta exige un mínimo diario que depende de la moneda y de la duración. Sube el presupuesto un poco (sin pasar del tope de la cuenta).
+              </p>
+            </Problem>
+            <Problem message="«Meta registró un presupuesto diario de … Por seguridad se canceló la creación» / «Meta no dejó el anuncio en pausa»">
+              <p>
+                Es una comprobación de seguridad: la app verificó con Meta lo que acababa de crear y no coincidía con lo pedido (presupuesto distinto o no quedó en pausa), así que lo borró. No se gastó nada. Avisa a quien administra la app: probablemente Meta cambió algo.
+              </p>
+            </Problem>
+            <Problem message="«Meta rechazó la solicitud. Detalle de Meta: …» (al crear un anuncio)">
+              <p>
+                Meta no aceptó alguna parte del anuncio (objetivo, público, creativo). Lo que se había creado a medias se borró y no se gastó nada. Copia el <em>Detalle de Meta</em>: dice qué campo rechazó y permite ajustar la app. Mientras tanto puedes crear ese anuncio directamente en Meta y administrarlo desde «Campañas en Meta».
+              </p>
+            </Problem>
+            <Problem message="«Una ciudad … está en la Unión Europea: Meta pide datos adicionales (DSA)»">
+              <p>
+                Para públicos en la Unión Europea Meta exige indicar quién paga y quién se beneficia del anuncio, datos que esta app no recoge. Crea ese anuncio directamente en Meta.
               </p>
             </Problem>
             <Problem message="«(#10) This endpoint requires the 'pages_read_user_content' permission or the 'Page Public Content Access' feature» (al leer estadísticas de Facebook)">

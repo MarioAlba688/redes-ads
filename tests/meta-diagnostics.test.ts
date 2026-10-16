@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildMetaDiagnostics, publicImageCheck, type DiagnosticInput } from "@/lib/meta/diagnostics";
+import { buildMetaDiagnostics, nameList, publicImageCheck, type DiagnosticInput } from "@/lib/meta/diagnostics";
 
 const ALL = [
   "ads_read",
+  "ads_management",
   "business_management",
   "pages_show_list",
   "pages_read_engagement",
@@ -167,6 +168,60 @@ describe("buildMetaDiagnostics", () => {
     expect(byId(ok, "estadisticas")).toMatchObject({ status: "ok", detail: expect.stringContaining("cuentas conectadas") });
     const unknown = buildMetaDiagnostics({ ...base, accounts: [{ kind: "FACEBOOK_PAGE", name: "Reservi", scopes: null }] });
     expect(byId(unknown, "estadisticas").status).toBe("ok");
+  });
+
+  it("anuncios: avisa si META_SCOPES no pide ads_management (con ads_read solo se ven cifras)", () => {
+    const c = buildMetaDiagnostics({ ...base, scopes: ALL.filter((s) => s !== "ads_management") });
+    expect(byId(c, "anuncios")).toMatchObject({ status: "warn", anchor: "anuncios", detail: expect.stringContaining("ads_management") });
+  });
+
+  it("anuncios: una cuenta publicitaria conectada sin el permiso se nombra", () => {
+    const c = buildMetaDiagnostics({
+      ...base,
+      accounts: [
+        { kind: "AD_ACCOUNT", name: "Reservi Ads", scopes: "ads_read,pages_show_list", dailyBudgetCap: 50000 },
+        { kind: "AD_ACCOUNT", name: "Otra", scopes: "ads_read,ads_management", dailyBudgetCap: 50000 },
+      ],
+    });
+    const ads = byId(c, "anuncios");
+    expect(ads.status).toBe("warn");
+    expect(ads.title).toContain("1 cuenta");
+    expect(ads.detail).toContain("Reservi Ads");
+    expect(ads.detail).not.toContain("Otra");
+  });
+
+  it("anuncios: con el permiso pero sin tope, queda pendiente y manda a fijarlo (sin tope no se crea nada)", () => {
+    const c = buildMetaDiagnostics({ ...base, accounts: [{ kind: "AD_ACCOUNT", name: "Reservi Ads", scopes: "ads_management", dailyBudgetCap: null }, { kind: "AD_ACCOUNT", name: "Sin dato", scopes: "ads_management" }] });
+    const ads = byId(c, "anuncios");
+    expect(ads.status).toBe("todo");
+    expect(ads.title).toContain("2 cuenta(s) publicitaria(s) sin tope");
+    expect(ads.detail).toMatch(/sin él no se pueden crear ni activar/);
+    expect(ads.anchor).toBe("anuncios");
+  });
+
+  it("anuncios: con permiso y tope en todas las cuentas, o sin cuentas aun, queda en orden", () => {
+    const ok = buildMetaDiagnostics({ ...base, accounts: [{ kind: "AD_ACCOUNT", name: "Reservi Ads", scopes: "ads_management", dailyBudgetCap: 50000 }] });
+    expect(byId(ok, "anuncios")).toMatchObject({ status: "ok", detail: expect.stringContaining("tope") });
+    expect(byId(buildMetaDiagnostics(base), "anuncios").status).toBe("ok");
+  });
+
+  it("anuncios: con decenas de cuentas la lista se recorta («y N más») en lugar de ocupar toda la pantalla", () => {
+    const many = Array.from({ length: 24 }, (_, i) => ({ kind: "AD_ACCOUNT", name: `Cuenta extra ${i}`, scopes: "ads_management", dailyBudgetCap: null }));
+    const ads = byId(buildMetaDiagnostics({ ...base, accounts: many }), "anuncios");
+    expect(ads.title).toContain("24 cuenta(s)");
+    expect(ads.detail).toContain("Cuenta extra 0, Cuenta extra 1, Cuenta extra 2, Cuenta extra 3, Cuenta extra 4 y 19 más");
+    expect(ads.detail).not.toContain("Cuenta extra 5");
+  });
+
+  it("nameList: hasta el maximo los nombra todos", () => {
+    expect(nameList(["A", "B"])).toBe("A, B");
+    expect(nameList(["A", "B", "C"], 2)).toBe("A, B y 1 más");
+    expect(nameList([])).toBe("");
+  });
+
+  it("anuncios: las paginas y cuentas de Instagram no cuentan como cuentas publicitarias", () => {
+    const c = buildMetaDiagnostics({ ...base, accounts: [{ kind: "FACEBOOK_PAGE", name: "Reservi", scopes: "pages_show_list" }] });
+    expect(byId(c, "anuncios").status).toBe("ok");
   });
 
   it("cada comprobacion que no esta bien dice a que parte del manual ir", () => {

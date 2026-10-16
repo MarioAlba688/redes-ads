@@ -470,7 +470,16 @@ try {
     const mp = await mob.newPage();
     await mp.goto(`${APP}/manual`);
     await mp.getByRole("heading", { name: "Manual: Facebook e Instagram" }).waitFor();
-    check("en el móvil el manual no tiene scroll horizontal", await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    const mobileOverflow = await mp.evaluate(() => {
+      const w = window.innerWidth;
+      const bad = [...document.querySelectorAll("body *")]
+        .filter((el) => el.scrollWidth > el.clientWidth + 1 && getComputedStyle(el).overflowX === "visible" && el.clientWidth > 0)
+        .sort((x, y) => y.scrollWidth - x.scrollWidth)
+        .slice(0, 10)
+        .map((el) => `${el.tagName.toLowerCase()}.${String(el.className).slice(0, 50)} [${(el.textContent ?? "").trim().slice(0, 40)}] -> sw ${el.scrollWidth} cw ${el.clientWidth}`);
+      return { ok: document.documentElement.scrollWidth <= w, bad };
+    });
+    check("en el móvil el manual no tiene scroll horizontal", mobileOverflow.ok, mobileOverflow.bad.join(" | "));
     await mp.screenshot({ path: path.join(SHOTS, "manual-movil.png"), fullPage: true });
     await dark.close();
     await mob.close();

@@ -4,6 +4,7 @@
 
 import { createHash, createHmac } from "node:crypto";
 import http from "node:http";
+import { createAdsSimulator } from "./fake-meta-ads.mjs";
 
 export const APP_ID = "123456789012345";
 export const APP_SECRET = "secreto-de-prueba-de-la-app-meta";
@@ -71,6 +72,12 @@ const DEFAULT_SCENARIO = {
   // --- estadisticas de lo publicado ---
   stats: "ok", // ok | noinsights (sin permiso de insights) | nousercontent (sin pages_read_user_content: leer reacciones/comentarios da error) | badmetric (Meta retiro una metrica) | ratelimit (limite de uso) | gone (la publicacion ya no existe) | hidelikes (Instagram sin like_count)
   statsBoost: 0, // se suma a todas las cifras: sirve para comprobar que una nueva lectura las actualiza
+  // --- anuncios (Marketing API; ver fake-meta-ads.mjs) ---
+  adsFail: {}, // { campaign: "perm" } ese paso responde ese error: perm | auth | rate | server | payment | invalid. Pasos: campaign, adset, creative, ad, adimage, activate, pause, budget, search
+  adsBudgetFactor: 1, // Meta guarda el presupuesto multiplicado por esto (100 simula una conversion de moneda mal hecha)
+  adsReview: "ok", // ok | pending (en revision) | disapproved: estado efectivo de un anuncio activo
+  adsEnhancements: "ok", // required: el creativo pide decidir sobre las «mejoras estandar»
+  adsMinBudget: null, // presupuesto diario minimo (unidades minimas); null = el de la moneda
 };
 
 // Cifras deterministas de una publicacion segun su numero (el final de su id): la prueba calcula lo mismo para comparar.
@@ -130,6 +137,8 @@ export function startFakeMeta(port, expectedRedirectUri) {
   const graphError = (res, status, code, message, extra = {}) =>
     json(res, status, { error: { message, type: code === 190 ? "OAuthException" : "GraphMethodException", code, fbtrace_id: "FAKE", ...extra } });
 
+  const ads = createAdsSimulator({ getScenario: () => scenario, graphError, json, userToken: LONG_TOKEN });
+
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://127.0.0.1:${port}`);
     const p = url.searchParams;
@@ -142,6 +151,7 @@ export function startFakeMeta(port, expectedRedirectUri) {
       return json(res, 200, scenario);
     }
     if (url.pathname === "/__reset") {
+      ads.reset();
       scenario = { ...DEFAULT_SCENARIO };
       requests = [];
       lastDialog = null;
@@ -211,7 +221,7 @@ export function startFakeMeta(port, expectedRedirectUri) {
     if (path === "me") return json(res, 200, { id: "USER-1", name: "Mario Alba" });
 
     if (path === "me/permissions") {
-      const all = ["ads_read", "pages_show_list", "pages_read_engagement", "pages_read_user_content", "pages_manage_posts", "read_insights", "instagram_basic", "instagram_content_publish", "instagram_manage_insights"];
+      const all = ["ads_read", "ads_management", "pages_show_list", "pages_read_engagement", "pages_read_user_content", "pages_manage_posts", "read_insights", "instagram_basic", "instagram_content_publish", "instagram_manage_insights"];
       return json(res, 200, {
         data: all.map((permission) => ({ permission, status: scenario.perms === "noads" && permission === "ads_read" ? "declined" : "granted" })),
       });
@@ -233,6 +243,9 @@ export function startFakeMeta(port, expectedRedirectUri) {
     }
 
     if (path === "me/accounts") return json(res, 200, { data: scenario.assets === "bulk" ? [...PAGES, ...BULK_PAGES] : PAGES });
+
+    // --- anuncios (campañas, conjuntos, creativos, anuncios, imagenes y busquedas) ---
+    if (await ads.handle({ req, res, path, p, arg, body, token })) return;
 
     // --- publicar en una pagina de Facebook o una cuenta de Instagram ---
     if (req.method === "POST") {
@@ -406,7 +419,9 @@ export function startFakeMeta(port, expectedRedirectUri) {
           lastDialog = null;
           published = [];
           containers = new Map();
+          ads.reset();
         },
+        ads,
         requests: () => requests,
         lastDialog: () => lastDialog,
         published: () => published,

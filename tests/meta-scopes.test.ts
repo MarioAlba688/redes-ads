@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { missingPublishScope, missingScopeMessage, missingStatsMessage, missingStatsScopes, PUBLISH_SCOPE, STATS_SCOPE } from "@/lib/meta/scopes";
+import { ADS_WRITE_SCOPE, missingAdsWriteMessage, missingAdsWriteScope, missingPublishScope, missingScopeMessage, missingStatsMessage, missingStatsScopes, PUBLISH_SCOPE, STATS_SCOPE } from "@/lib/meta/scopes";
 
 // Los permisos que concedio de verdad la conexion real de Reservi: tenia anuncios y paginas, pero no publicar.
 const GRANTED_TODAY = "pages_show_list,ads_read,business_management,pages_read_engagement,public_profile";
@@ -29,6 +29,28 @@ describe("missingPublishScope", () => {
     expect(missingPublishScope("FACEBOOK_PAGE", undefined)).toBeNull();
     expect(missingPublishScope("FACEBOOK_PAGE", "  ")).toBeNull();
     expect(missingPublishScope("AD_ACCOUNT", GRANTED_TODAY)).toBeNull();
+  });
+});
+
+describe("missingAdsWriteScope (crear anuncios)", () => {
+  it("crear y administrar anuncios exige ads_management, que leerlos (ads_read) no da", () => {
+    expect(ADS_WRITE_SCOPE).toBe("ads_management");
+    expect(missingAdsWriteScope(GRANTED_TODAY)).toBe("ads_management");
+    expect(GRANTED_TODAY).toContain("ads_read");
+  });
+
+  it("con el permiso no falta nada (aunque haya espacios); si no se conocen, decide Meta", () => {
+    expect(missingAdsWriteScope("ads_read, ads_management ,x")).toBeNull();
+    expect(missingAdsWriteScope("ads_management_extra")).toBe("ads_management");
+    for (const s of [null, undefined, "  "]) expect(missingAdsWriteScope(s)).toBeNull();
+  });
+
+  it("el mensaje dice la cuenta, el permiso y los pasos", () => {
+    const m = missingAdsWriteMessage("Reservi Ads");
+    expect(m).toContain("«Reservi Ads»");
+    expect(m).toContain("ads_management");
+    expect(m).toMatch(/META_SCOPES/);
+    expect(m).toMatch(/Reconectar Meta/);
   });
 });
 

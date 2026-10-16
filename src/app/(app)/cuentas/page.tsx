@@ -6,7 +6,7 @@ import { dateTimeFormat } from "@/lib/display-time";
 import { db } from "@/lib/db";
 import { googleConfig } from "@/lib/google/config";
 import { metaConfig } from "@/lib/meta/config";
-import { missingPublishScope } from "@/lib/meta/scopes";
+import { missingAdsWriteScope, missingPublishScope } from "@/lib/meta/scopes";
 import { can } from "@/lib/permissions";
 import {
   ACCOUNT_KIND_LABELS,
@@ -18,6 +18,7 @@ import {
 } from "@/lib/platforms";
 import { tiktokConfig } from "@/lib/tiktok/config";
 import { AccountRowActions, SyncAllButton } from "./account-controls";
+import { DailyCapForm } from "./daily-cap-form";
 
 export const metadata: Metadata = { title: "Cuentas" };
 
@@ -176,6 +177,7 @@ export default async function AccountsPage({ searchParams }: PageProps<"/cuentas
       lastSyncedAt: true,
       lastError: true,
       scopes: true, // permisos concedidos por Meta (no es un secreto): sirve para avisar si falta el de publicar
+      dailyBudgetCap: true, // tope de gasto diario por anuncio (cuentas publicitarias de Meta)
     },
     orderBy: [{ platform: "asc" }, { kind: "asc" }, { name: "asc" }],
   });
@@ -288,6 +290,9 @@ export default async function AccountsPage({ searchParams }: PageProps<"/cuentas
                         <p className="text-xs text-muted">
                           {[a.handle, a.currency].filter(Boolean).join(" · ") || PLATFORM_NAMES[a.platform]}
                         </p>
+                        {a.platform === "META" && a.kind === "AD_ACCOUNT" && a.status !== "REVOKED" && (
+                          <DailyCapForm accountId={a.id} currency={a.currency} cap={a.dailyBudgetCap === null ? null : Number(a.dailyBudgetCap)} canEdit={canManage} />
+                        )}
                       </td>
                       <td className="px-5 py-3">
                         <p>{ACCOUNT_KIND_LABELS[a.kind]}</p>
@@ -304,6 +309,14 @@ export default async function AccountsPage({ searchParams }: PageProps<"/cuentas
                         )}
                         {a.lastError && a.status !== "REVOKED" && (
                           <p className="mt-1 max-w-xs text-xs text-danger">{a.lastError}</p>
+                        )}
+                        {a.status !== "REVOKED" && a.platform === "META" && a.kind === "AD_ACCOUNT" && missingAdsWriteScope(a.scopes) && (
+                          <p className="mt-1 max-w-xs text-xs text-warning">
+                            Sin permiso para crear anuncios (falta ads_management): solo se pueden ver sus cifras. Agrégalo en tu app de Meta y pulsa «Reconectar Meta».{" "}
+                            <Link href="/manual#anuncios" className="font-medium underline">
+                              Ver cómo
+                            </Link>
+                          </p>
                         )}
                         {a.status !== "REVOKED" && missingPublishScope(a.kind, a.scopes) && (
                           <p className="mt-1 max-w-xs text-xs text-warning">

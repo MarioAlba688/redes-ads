@@ -17,6 +17,19 @@ export function missingPublishScope(kind: string, scopes: string | null | undefi
   return granted.includes(needed) ? null : needed;
 }
 
+/** Permiso que Meta exige para crear y administrar anuncios (leerlos solo pide ads_read). */
+export const ADS_WRITE_SCOPE = "ads_management";
+
+/** `ads_management` si falta en esa cuenta publicitaria; null si lo tiene o no se conoce la lista (entonces decide Meta). */
+export function missingAdsWriteScope(scopes: string | null | undefined): string | null {
+  if (!scopes || !scopes.trim()) return null;
+  return scopes.split(",").map((s) => s.trim()).includes(ADS_WRITE_SCOPE) ? null : ADS_WRITE_SCOPE;
+}
+
+export function missingAdsWriteMessage(accountName: string): string {
+  return `La conexión con Meta de «${accountName}» no incluye el permiso ${ADS_WRITE_SCOPE}, necesario para crear y administrar anuncios. Agrégalo en tu app de Meta (caso de uso de la API de marketing), inclúyelo en META_SCOPES del archivo .env (o quita esa variable) y pulsa «Reconectar Meta» en Cuentas.`;
+}
+
 /**
  * Permisos para leer las estadisticas de lo publicado:
  * - `basic`: leer la publicacion (compartidos, y los "me gusta" y comentarios de Instagram). Sin el no hay nada que leer.

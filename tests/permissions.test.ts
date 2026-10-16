@@ -8,6 +8,8 @@ const ALL_PERMISSIONS: Permission[] = [
   "accounts.manage",
   "metrics.view",
   "stats.refresh",
+  "ads.create",
+  "ads.approve",
   "brands.view",
   "brands.manage",
   "content.view",
@@ -69,6 +71,17 @@ describe("permisos por rol", () => {
     for (const role of ROLES) expect(can(role, "metrics.view")).toBe(true);
     for (const role of ["ADMIN", "EDITOR", "APPROVER"] as const) expect(can(role, "stats.refresh")).toBe(true);
     expect(can("VIEWER", "stats.refresh")).toBe(false);
+  });
+
+  it("quien crea anuncios no puede activarlos y quien los activa no los crea: el gasto lo aprueba otra persona", () => {
+    expect(can("EDITOR", "ads.create")).toBe(true);
+    expect(can("EDITOR", "ads.approve")).toBe(false);
+    expect(can("APPROVER", "ads.approve")).toBe(true);
+    expect(can("APPROVER", "ads.create")).toBe(false);
+    expect(can("ADMIN", "ads.create")).toBe(true);
+    expect(can("ADMIN", "ads.approve")).toBe(true);
+    expect(can("VIEWER", "ads.create")).toBe(false);
+    expect(can("VIEWER", "ads.approve")).toBe(false);
   });
 
   it("isRole solo acepta roles validos", () => {
