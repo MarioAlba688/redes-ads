@@ -6,6 +6,7 @@ const ALL = [
   "business_management",
   "pages_show_list",
   "pages_read_engagement",
+  "pages_read_user_content",
   "pages_manage_posts",
   "read_insights",
   "instagram_basic",
@@ -140,7 +141,7 @@ describe("buildMetaDiagnostics", () => {
       ...base,
       accounts: [
         { kind: "FACEBOOK_PAGE", name: "Reservi", scopes: TODAY_SCOPES },
-        { kind: "FACEBOOK_PAGE", name: "Smartec", scopes: `${TODAY_SCOPES},read_insights` },
+        { kind: "FACEBOOK_PAGE", name: "Smartec", scopes: `${TODAY_SCOPES},read_insights,pages_read_user_content` },
         { kind: "AD_ACCOUNT", name: "Cuenta publicitaria", scopes: TODAY_SCOPES },
       ],
     });
@@ -152,8 +153,16 @@ describe("buildMetaDiagnostics", () => {
     expect(stats.detail).not.toContain("Cuenta publicitaria");
   });
 
+  it("estadisticas: una pagina con read_insights pero sin pages_read_user_content (el caso real) tambien se avisa", () => {
+    const realToday = "pages_show_list,pages_read_engagement,read_insights,pages_manage_posts";
+    const c = buildMetaDiagnostics({ ...base, accounts: [{ kind: "FACEBOOK_PAGE", name: "Reservi", scopes: realToday }] });
+    expect(byId(c, "estadisticas")).toMatchObject({ status: "warn", detail: expect.stringContaining("Reservi") });
+    const notRequested = buildMetaDiagnostics({ ...base, scopes: ALL.filter((s) => s !== "pages_read_user_content") });
+    expect(byId(notRequested, "estadisticas").detail).toContain("pages_read_user_content");
+  });
+
   it("estadisticas: con los permisos concedidos o sin conocerlos, no alarma", () => {
-    const granted = "pages_read_engagement,read_insights,instagram_basic,instagram_manage_insights";
+    const granted = "pages_read_engagement,pages_read_user_content,read_insights,instagram_basic,instagram_manage_insights";
     const ok = buildMetaDiagnostics({ ...base, accounts: [{ kind: "FACEBOOK_PAGE", name: "Reservi", scopes: granted }, { kind: "INSTAGRAM_PROFILE", name: "Oficial", scopes: granted }] });
     expect(byId(ok, "estadisticas")).toMatchObject({ status: "ok", detail: expect.stringContaining("cuentas conectadas") });
     const unknown = buildMetaDiagnostics({ ...base, accounts: [{ kind: "FACEBOOK_PAGE", name: "Reservi", scopes: null }] });

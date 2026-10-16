@@ -107,6 +107,85 @@ describe("estadisticas de Facebook", () => {
   });
 });
 
+describe("estadisticas de Facebook sin pages_read_user_content", () => {
+  // El error real que dio Meta en la primera lectura con una cuenta de verdad.
+  const NO_USER_CONTENT = err(
+    10,
+    "(#10) This endpoint requires the 'pages_read_user_content' permission or the 'Page Public Content Access' feature. Refer to https://developers.facebook.com/docs/apps/review/login-permissions",
+    403,
+  );
+  const reactions = (breakdown: Record<string, number>) => ({ body: { data: [{ name: "post_reactions_by_type_total", period: "lifetime", values: [{ value: breakdown }] }] } });
+
+  /** Meta de verdad: leer reacciones/comentarios falla; lo demas responde. */
+  const server = (url: URL) => {
+    if (url.pathname.endsWith("/insights")) {
+      const asked = (url.searchParams.get("metric") ?? "").split(",");
+      const data = asked.map((name) => ({
+        name,
+        values: [{ value: name === "post_reactions_by_type_total" ? { like: 20, love: 5, haha: 1 } : name === "post_media_view" ? 900 : 640 }],
+      }));
+      return { body: { data } };
+    }
+    return (url.searchParams.get("fields") ?? "").includes("reactions") ? NO_USER_CONTENT : { body: { id: "P1_555", shares: { count: 2 } } };
+  };
+
+  it("sabiendo que falta el permiso: pide solo los compartidos, saca las reacciones de los insights y deja los comentarios sin dato", async () => {
+    const calls = stubFetch(server);
+    const res = await fetchFacebookPostMetrics(page, "P1_555", { userContent: false });
+
+    expect(calls).toHaveLength(2); // nada que vaya a fallar
+    expect(calls[0].url.searchParams.get("fields")).toBe("shares");
+    expect(calls[1].url.searchParams.get("metric")).toBe("post_media_view,post_total_media_view_unique,post_reactions_by_type_total");
+    expect(res.metrics).toEqual({ views: 900, reach: 640, likes: 26, comments: null, shares: 2, saves: null });
+    expect(res.notes).toEqual([]); // el aviso lo pone quien ya conocia el permiso que falta
+  });
+
+  it("sin saberlo, el error (#10) de Meta no tumba la lectura: sigue con lo que no necesita el permiso y lo explica", async () => {
+    const calls = stubFetch(server);
+    const res = await fetchFacebookPostMetrics(page, "P1_555");
+
+    expect(calls.map((c) => c.url.searchParams.get("fields") ?? c.url.searchParams.get("metric"))).toEqual([
+      "reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0),shares",
+      "shares",
+      "post_media_view,post_total_media_view_unique,post_reactions_by_type_total",
+    ]);
+    expect(res.metrics).toEqual({ views: 900, reach: 640, likes: 26, comments: null, shares: 2, saves: null });
+    expect(res.notes).toHaveLength(1);
+    expect(res.notes[0]).toContain("pages_read_user_content");
+    expect(res.notes[0]).toMatch(/comentarios/);
+    expect(res.transient).toBe(false);
+  });
+
+  it("si Meta tampoco entrega el desglose de reacciones, quedan sin dato (no 0) y se dice", async () => {
+    stubFetch((url) => {
+      if (!url.pathname.endsWith("/insights")) return server(url);
+      return (url.searchParams.get("metric") ?? "").includes(",") || url.searchParams.get("metric") === "post_reactions_by_type_total"
+        ? err(100, "(#100) The value must be a valid insights metric")
+        : insights({ post_media_view: 900 });
+    });
+    const res = await fetchFacebookPostMetrics(page, "P1_555", { userContent: false });
+    expect(res.metrics).toMatchObject({ views: 900, likes: null, comments: null });
+    expect(res.notes.join(" ")).toContain("reacciones");
+  });
+
+  it("un desglose vacío son 0 reacciones (Meta lo manda así cuando nadie reaccionó)", async () => {
+    stubFetch((url) => (url.pathname.endsWith("/insights") ? reactions({}) : { body: { id: "P1_1" } }));
+    const res = await fetchFacebookPostMetrics(page, "P1_1", { userContent: false });
+    expect(res.metrics.likes).toBe(0);
+  });
+
+  it("si falla también lo básico se lanza el error (no hay nada que guardar)", async () => {
+    stubFetch(() => NO_USER_CONTENT);
+    await expect(fetchFacebookPostMetrics(page, "P1_555")).rejects.toBeInstanceOf(MetaApiError);
+    await expect(fetchFacebookPostMetrics(page, "P1_555", { userContent: false })).rejects.toBeInstanceOf(MetaApiError);
+  });
+
+  it("solo un error de permisos activa la salida alternativa: un límite de uso se relanza", async () => {
+    stubFetch(() => err(4, "(#4) Application request limit reached"));
+    await expect(fetchFacebookPostMetrics(page, "P1_555")).rejects.toMatchObject({ isRateLimit: true });
+  });
+});
+
 describe("estadisticas de Instagram", () => {
   const media = { body: { id: "IGM-1", like_count: 25, comments_count: 3 } };
 
@@ -178,6 +257,7 @@ describe("classifyStatsError", () => {
     expect(fb.kind).toBe("permission");
     expect(fb.message).toContain("pages_read_engagement");
     expect(fb.message).toContain("read_insights");
+    expect(fb.message).toContain("pages_read_user_content");
     expect(fb.message).toContain("(#10) no permission");
     const insta = classifyStatsError(e(200, "(#200) denied", { status: 403 }), "INSTAGRAM_PROFILE");
     expect(insta.message).toContain("instagram_basic");

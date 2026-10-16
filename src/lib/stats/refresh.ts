@@ -109,10 +109,11 @@ export async function refreshTargetMetrics(targetId: string, now = new Date()): 
       const fetched =
         account.kind === "INSTAGRAM_PROFILE"
           ? await fetchInstagramMediaMetrics(ref, target.externalId, options)
-          : await fetchFacebookPostMetrics(ref, target.externalId, options);
+          : await fetchFacebookPostMetrics(ref, target.externalId, { ...options, userContent: missing.content === null });
 
       const notes = [...fetched.notes];
       if (missing.insights) notes.push(missingStatsMessage(account.name, missing.insights, "insights"));
+      if (missing.content) notes.push(missingStatsMessage(account.name, missing.content, "content"));
       const note = notes.length ? notes.join(" ") : null;
       await saveReading(targetId, {
         metrics: mergeMetrics(fetched.metrics, previous),

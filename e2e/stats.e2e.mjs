@@ -27,7 +27,7 @@ const USERS = {
 };
 const BRAND_RES = "brand-reservi";
 const BRAND_SMA = "brand-smartec";
-const FULL_SCOPES = "pages_show_list,pages_read_engagement,pages_manage_posts,read_insights,instagram_basic,instagram_content_publish,instagram_manage_insights";
+const FULL_SCOPES = "pages_show_list,pages_read_engagement,pages_read_user_content,pages_manage_posts,read_insights,instagram_basic,instagram_content_publish,instagram_manage_insights";
 
 const { raw: DB_URL, url: dbUrl } = requireTestDb();
 const db = createDb(dbUrl);
@@ -377,7 +377,7 @@ try {
 
   // ------------------------------------------------------------ 5. permisos que faltan en la conexion
   calm();
-  await db.sql("UPDATE SocialAccount SET scopes='pages_read_engagement,pages_manage_posts' WHERE id='acc-fb-smartec'");
+  await db.sql("UPDATE SocialAccount SET scopes='pages_read_engagement,pages_read_user_content,pages_manage_posts' WHERE id='acc-fb-smartec'");
   const p5 = await makePublished({ brand: BRAND_SMA, text: `Sin insights ${tag()}`, ageMinutes: 30, targets: [{ account: "acc-fb-smartec", externalId: "P-2_8" }] });
   const noScope = await waitMetrics(p5.targets["acc-fb-smartec"]);
   check("sin read_insights en la conexión, no se llama a insights (y se leen las reacciones)", statsCalls((r) => r.path === "P-2_8/insights").length === 0 && statsCalls((r) => r.path === "P-2_8").length === 1 && noScope.likes === fbExp(8).likes && noScope.views === null && noScope.reach === null);
@@ -406,6 +406,34 @@ try {
   await db.sql(`UPDATE PostTargetMetrics SET nextFetchAt = ${minutesAgo(1)} WHERE targetId IN (?, ?)`, [p5.targets["acc-fb-smartec"], p6.targets["acc-ig-reservi"]]);
   const fixed = await Promise.all([p5.targets["acc-fb-smartec"], p6.targets["acc-ig-reservi"]].map((id) => waitMetrics(id, (m) => m.note === null && m.views !== null)));
   check("al arreglar los permisos, la lectura siguiente trae todo y quita el aviso", same(fixed[0], fbExp(8)) && same(fixed[1], igExp(12)), JSON.stringify(fixed));
+
+  // Facebook sin pages_read_user_content: el caso REAL de la primera lectura con una cuenta de verdad. Meta rechaza con
+  // «(#10) This endpoint requires the 'pages_read_user_content' permission» toda lectura que pida reacciones o comentarios.
+  fake.setScenario({ stats: "nousercontent" });
+  await db.sql("UPDATE SocialAccount SET scopes='pages_read_engagement,read_insights,pages_manage_posts' WHERE id='acc-fb-smartec'");
+  const p8 = await makePublished({ brand: BRAND_SMA, text: `Sin contenido de usuarios ${tag()}`, ageMinutes: 25, targets: [{ account: "acc-fb-smartec", externalId: "P-2_9" }] });
+  const t8 = p8.targets["acc-fb-smartec"];
+  const noContent = await waitMetrics(t8);
+  check("sabiendo que falta pages_read_user_content no se intenta leer reacciones ni comentarios (una sola lectura de la publicación)", statsCalls((r) => r.path === "P-2_9").length === 1 && statsCalls((r) => r.path === "P-2_9/insights").length === 1);
+  check("las reacciones salen del desglose de los insights, los comentarios quedan sin dato (no 0) y compartidos, vistas y alcance llegan", noContent.likes === fbExp(9).likes && noContent.comments === null && noContent.shares === fbExp(9).shares && noContent.views === fbExp(9).views && noContent.reach === fbExp(9).reach, JSON.stringify(noContent));
+  check("el aviso nombra el permiso y los pasos", /pages_read_user_content/.test(noContent.note ?? "") && /Reconectar Meta/.test(noContent.note ?? ""), String(noContent.note));
+  await admin.goto(STATS);
+  check("la pantalla avisa de las páginas sin ese permiso y la fila muestra «—» en comentarios", (await admin.getByText(/Estas páginas no tienen el permiso pages_read_user_content.*Smartec/).count()) === 1 && (await cellTexts(tableRow(admin, p8.text)))[3] === "—");
+
+  // Sin conocer los permisos (conexión antigua sin lista), el error de Meta no tumba la lectura: se sigue sin reacciones ni comentarios.
+  await db.sql("UPDATE SocialAccount SET scopes=NULL WHERE id='acc-fb-smartec'");
+  const p9 = await makePublished({ brand: BRAND_SMA, text: `Permisos sin conocer ${tag()}`, ageMinutes: 15, targets: [{ account: "acc-fb-smartec", externalId: "P-2_10" }] });
+  const t9 = p9.targets["acc-fb-smartec"];
+  const unknownScopes = await waitMetrics(t9);
+  check("sin conocer los permisos, el (#10) de Meta no tumba la lectura: reintenta sin reacciones ni comentarios", statsCalls((r) => r.path === "P-2_10").length === 2 && unknownScopes.likes === fbExp(10).likes && unknownScopes.comments === null && unknownScopes.views === fbExp(10).views, JSON.stringify(unknownScopes));
+  check("y lo explica con el permiso que falta", /pages_read_user_content/.test(unknownScopes.note ?? "") && /comentarios/.test(unknownScopes.note ?? ""), String(unknownScopes.note));
+
+  // Al conceder el permiso (y reconectar), la lectura siguiente trae los comentarios y el aviso desaparece.
+  calm();
+  await db.sql("UPDATE SocialAccount SET scopes=? WHERE id='acc-fb-smartec'", [FULL_SCOPES]);
+  await db.sql(`UPDATE PostTargetMetrics SET nextFetchAt = ${minutesAgo(1)} WHERE targetId IN (?, ?)`, [t8, t9]);
+  const withContent = await Promise.all([t8, t9].map((id) => waitMetrics(id, (m) => m.note === null && m.comments !== null && m.age < 10)));
+  check("con el permiso concedido llegan los comentarios y las reacciones directas, sin avisos", same(withContent[0], fbExp(9)) && same(withContent[1], fbExp(10)), JSON.stringify(withContent));
 
   // Instagram oculta los "me gusta": sin dato, no 0.
   fake.setScenario({ stats: "hidelikes" });

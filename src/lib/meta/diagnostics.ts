@@ -31,7 +31,12 @@ export type DiagnosticInput = {
 
 const IG_SCOPES = ["instagram_basic", PUBLISH_SCOPE.INSTAGRAM_PROFILE] as const;
 /** Permisos que se piden al conectar para leer las estadisticas de lo publicado (instagram_basic ya va con los de publicar). */
-const STATS_REQUESTED = [STATS_SCOPE.FACEBOOK_PAGE.basic, STATS_SCOPE.FACEBOOK_PAGE.insights, STATS_SCOPE.INSTAGRAM_PROFILE.insights] as const;
+const STATS_REQUESTED = [
+  STATS_SCOPE.FACEBOOK_PAGE.basic,
+  STATS_SCOPE.FACEBOOK_PAGE.insights,
+  STATS_SCOPE.FACEBOOK_PAGE.content,
+  STATS_SCOPE.INSTAGRAM_PROFILE.insights,
+] as const;
 
 /** Textos de ejemplo que alguien pudo copiar tal cual del manual o de una guia en lugar de poner su direccion real. */
 const PLACEHOLDER_HOST = /palabras-al-azar|tu-direccion|tu-dominio|tudominio|ejemplo|example\.|nombre-raro/i;
@@ -118,7 +123,7 @@ export function buildMetaDiagnostics(input: DiagnosticInput): DiagnosticCheck[] 
   const statsNotRequested = STATS_REQUESTED.filter((s) => !input.scopes.includes(s));
   const noStats = [...pages, ...instagram].filter((a) => {
     const m = missingStatsScopes(a.kind, a.scopes);
-    return m.basic !== null || m.insights !== null;
+    return m.basic !== null || m.insights !== null || m.content !== null;
   });
   if (statsNotRequested.length > 0) {
     checks.push({

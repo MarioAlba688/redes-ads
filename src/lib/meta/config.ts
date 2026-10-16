@@ -14,6 +14,7 @@ export const META_SCOPES = [
   "business_management",
   "pages_show_list", // listar las paginas de Facebook
   "pages_read_engagement", // leer datos de las paginas
+  "pages_read_user_content", // leer comentarios y reacciones de las publicaciones (estadisticas)
   "pages_manage_posts", // publicar en paginas de Facebook (Fase 3)
   "read_insights", // metricas de las paginas
   "instagram_basic", // datos basicos de la cuenta de Instagram vinculada

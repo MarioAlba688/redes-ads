@@ -74,6 +74,7 @@ export default async function StatsPage({ searchParams }: PageProps<"/estadistic
     .map((a) => ({ name: a.name, ...missingStatsScopes(a.kind, a.scopes) }));
   const noBasic = lacking.filter((a) => a.basic).map((a) => a.name);
   const noInsights = lacking.filter((a) => !a.basic && a.insights).map((a) => a.name);
+  const noContent = lacking.filter((a) => !a.basic && a.content).map((a) => a.name);
 
   // --- resumenes ---
   const summary = summarize(rows);
@@ -123,6 +124,18 @@ export default async function StatsPage({ searchParams }: PageProps<"/estadistic
         <div className="mb-4">
           <Alert tone="warning">
             Estas cuentas no tienen el permiso read_insights o instagram_manage_insights: se leen sus reacciones y comentarios, pero no las vistas ni el alcance: {noInsights.join(", ")}.{" "}
+            <Link href="/manual#estadisticas" className="font-medium underline">
+              Ver cómo arreglarlo
+            </Link>
+            .
+          </Alert>
+        </div>
+      )}
+
+      {noContent.length > 0 && (
+        <div className="mb-4">
+          <Alert tone="warning">
+            Estas páginas no tienen el permiso pages_read_user_content: no se leen sus comentarios (las reacciones sí, desde las estadísticas de cada publicación, y las interacciones no los incluyen): {noContent.join(", ")}.{" "}
             <Link href="/manual#estadisticas" className="font-medium underline">
               Ver cómo arreglarlo
             </Link>

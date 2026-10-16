@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: "Manual" };
 
 /** Permisos con los que funciona todo: anuncios, paginas, publicar en Facebook y en Instagram, y leer sus estadisticas. */
 const RECOMMENDED_SCOPES =
-  "ads_read,business_management,pages_show_list,pages_read_engagement,pages_manage_posts,read_insights,instagram_basic,instagram_content_publish,instagram_manage_insights";
+  "ads_read,business_management,pages_show_list,pages_read_engagement,pages_read_user_content,pages_manage_posts,read_insights,instagram_basic,instagram_content_publish,instagram_manage_insights";
 
 const TOC = [
   { id: "requisitos", label: "Antes de empezar" },
@@ -39,6 +39,8 @@ export default async function ManualPage() {
   const e = env();
   const appUrl = e.APP_URL.replace(/\/$/, "");
   const redirectUri = `${appUrl}/api/meta/callback`;
+  // Lo que va en «Dominios de la app» de Meta: solo el dominio, sin https:// ni puerto ni ruta.
+  const appHost = new URL(appUrl).hostname;
   // El tunel apunta al puerto en el que corre la app en este PC (el de APP_URL si es local; si no, el de `npm run dev`).
   const localAddress = isLocalHost(new URL(appUrl).hostname) ? appUrl : "http://localhost:3000";
   const scopes = e.META_SCOPES ? e.META_SCOPES.split(",").map((s) => s.trim()).filter(Boolean) : [...META_SCOPES];
@@ -209,6 +211,12 @@ export default async function ManualPage() {
               </p>
             </Step>
             <Step>
+              En <UI>Configuración de la app → Básica</UI>, en <UI>Dominios de la app</UI>, agrega el dominio con el que abres esta app, <UI>sin</UI> <code>https://</code> ni nada después del dominio (si usas la app en tu PC y en tu servidor, agrega los dos) y pulsa{" "}
+              <UI>Guardar cambios</UI>. Ahora mismo sería:
+              <Code text={appHost} />
+              <p className="mt-2 text-muted">Sin esto, Facebook responde «No se puede cargar la URL» al intentar conectar (ver «Mensajes frecuentes»).</p>
+            </Step>
+            <Step>
               <UI>Modo desarrollo:</UI> mientras la app esté en ese modo funciona sin revisión de Meta para las personas con un <UI>rol en la app</UI> (<UI>Roles de la app</UI>: administradores, desarrolladores o probadores). Asegúrate de que tu
               usuario esté ahí. No pulses «Crear configuración» en <UI>Facebook Login for Business</UI>: no hace falta.
             </Step>
@@ -329,8 +337,9 @@ export default async function ManualPage() {
         <Section id="estadisticas" title="7. Estadísticas de las publicaciones" intro="Vistas, alcance, reacciones, comentarios, compartidos y guardados de lo que publicas desde esta app. Se ven en el menú Estadísticas.">
           <Steps>
             <Step>
-              En tu app de Meta, dentro de los mismos casos de uso del paso 2, comprueba en <UI>Permisos y funciones</UI> que aparecen <code>pages_read_engagement</code> y <code>read_insights</code> (Facebook) e{" "}
-              <code>instagram_basic</code> e <code>instagram_manage_insights</code> (Instagram). Si falta alguno, habilítalo ahí.
+              En tu app de Meta, dentro de los mismos casos de uso del paso 2, comprueba en <UI>Permisos y funciones</UI> que aparecen <code>pages_read_engagement</code>, <code>pages_read_user_content</code> y <code>read_insights</code> (Facebook) e{" "}
+              <code>instagram_basic</code> e <code>instagram_manage_insights</code> (Instagram). Si falta alguno, búscalo ahí por su nombre y pulsa <UI>Agregar</UI>. En modo desarrollo funcionan para quienes tienen un rol en la app; para usar la app con cuentas de otras personas
+              Meta pide revisión.
             </Step>
             <Step>
               Agrégalos a <code>META_SCOPES</code> (paso 3), reinicia la app y pulsa <UI>Reconectar Meta</UI> en <Link href="/cuentas" className="font-medium text-primary hover:underline">Cuentas</Link>. Sin reconectar, la conexión guardada sigue sin los permisos nuevos.
@@ -344,7 +353,8 @@ export default async function ManualPage() {
             <div className="rounded-lg border border-border p-4">
               <p className="font-semibold">Facebook</p>
               <p className="mt-1 text-muted">
-                Reacciones, comentarios y compartidos (permiso <code>pages_read_engagement</code>). Vistas y alcance (permiso <code>read_insights</code>).
+                Compartidos (permiso <code>pages_read_engagement</code>). Reacciones y comentarios (permiso <code>pages_read_user_content</code>: son contenido de otras personas y Meta lo pide aparte). Vistas y alcance (permiso <code>read_insights</code>).
+                Sin <code>pages_read_user_content</code> las reacciones se calculan de las estadísticas de cada publicación, pero los comentarios no se pueden leer.
               </p>
             </div>
             <div className="rounded-lg border border-border p-4">
@@ -444,6 +454,16 @@ export default async function ManualPage() {
                 Cada destino se publica por separado. Arregla el motivo que aparece en el destino que falló y pulsa <UI>Reintentar los que fallaron</UI>: solo se repite el que falló, nunca se vuelve a publicar en Facebook.
               </p>
             </Problem>
+            <Problem message="«(#10) This endpoint requires the 'pages_read_user_content' permission or the 'Page Public Content Access' feature» (al leer estadísticas de Facebook)">
+              <p>
+                Leer los <UI>comentarios y las reacciones</UI> de una publicación es leer contenido de otras personas, y Meta lo exige con un permiso aparte: <code>pages_read_user_content</code>. Sin él la app no se rinde: lee los compartidos, las vistas y el
+                alcance, calcula las reacciones a partir de las estadísticas de la publicación y deja los comentarios en «—» con un aviso.
+              </p>
+              <p>
+                Para tenerlos completos: agrega <code>pages_read_user_content</code> a los permisos de tu app de Meta (paso 7), a <code>META_SCOPES</code> (paso 3), reinicia y pulsa <UI>Reconectar Meta</UI>. «Page Public Content Access» es otra función de Meta, pensada para leer
+                páginas que no son tuyas; no la necesitas.
+              </p>
+            </Problem>
             <Problem message="«Estas cuentas no tienen el permiso read_insights / instagram_manage_insights / pages_read_engagement…» (en Estadísticas)">
               <p>
                 La conexión con Meta se hizo sin esos permisos, así que no se leen todas las cifras (o ninguna). Sigue el paso 7: habilítalos en tu app de Meta, agrégalos a <code>META_SCOPES</code>, reinicia y pulsa <UI>Reconectar Meta</UI>. La
@@ -464,6 +484,16 @@ export default async function ManualPage() {
               <p>
                 «—» significa que la red no entregó esa cifra (no es 0). Las vistas y el alcance tardan unas horas en aparecer, y Meta actualiza sus cifras con retraso. Pulsa <UI>Actualizar</UI> en Estadísticas para leerlas ya; si sigue igual, mira el aviso
                 bajo esa publicación.
+              </p>
+            </Problem>
+            <Problem message="«No se puede cargar la URL. El dominio de esta URL no está incluido en los dominios de la app» (en Facebook, al conectar)">
+              <p>
+                El dominio con el que abres esta app no está en la lista de tu app de Meta. Ve a <UI>Configuración de la app → Básica → Dominios de la app</UI>, agrega <code>{appHost}</code> (solo el dominio: sin <code>https://</code>, sin el puerto y sin ruta;
+                si la usas también en otro lugar, agrega ese dominio también) y pulsa <UI>Guardar cambios</UI>. Vuelve a conectar desde Cuentas.
+              </p>
+              <p>
+                Si sigue igual, comprueba que en <UI>Inicio de sesión de Facebook → Configuración</UI> estén activados <UI>Inicio de sesión de OAuth de cliente</UI> e <UI>Inicio de sesión de OAuth web</UI> y que la dirección de retorno sea exactamente{" "}
+                <code className="break-all">{redirectUri}</code>. Y fíjate en la barra de direcciones: debes abrir la app con la misma dirección que tiene <code>APP_URL</code> (<code>{appUrl}</code>); si entras por otra (la IP del servidor, un túnel), Facebook ve otro dominio.
               </p>
             </Problem>
             <Problem message="Facebook muestra un error de «redirect_uri» al conectar">

@@ -33,27 +33,37 @@ describe("missingPublishScope", () => {
 });
 
 describe("missingStatsScopes", () => {
-  it("cada tipo de cuenta necesita un permiso basico y uno de insights", () => {
+  const NONE = { basic: null, insights: null, content: null };
+
+  it("cada tipo de cuenta necesita un permiso basico y uno de insights; Facebook, ademas, uno para comentarios y reacciones", () => {
     expect(STATS_SCOPE).toEqual({
-      FACEBOOK_PAGE: { basic: "pages_read_engagement", insights: "read_insights" },
-      INSTAGRAM_PROFILE: { basic: "instagram_basic", insights: "instagram_manage_insights" },
+      FACEBOOK_PAGE: { basic: "pages_read_engagement", insights: "read_insights", content: "pages_read_user_content" },
+      INSTAGRAM_PROFILE: { basic: "instagram_basic", insights: "instagram_manage_insights", content: null },
     });
   });
 
-  it("en la conexion real de hoy de Reservi falta read_insights, pero pages_read_engagement ya esta", () => {
-    expect(missingStatsScopes("FACEBOOK_PAGE", GRANTED_TODAY)).toEqual({ basic: null, insights: "read_insights" });
-    expect(missingStatsScopes("INSTAGRAM_PROFILE", GRANTED_TODAY)).toEqual({ basic: "instagram_basic", insights: "instagram_manage_insights" });
+  it("en la conexion real de hoy de Reservi falta read_insights y pages_read_user_content, pero pages_read_engagement ya esta", () => {
+    expect(missingStatsScopes("FACEBOOK_PAGE", GRANTED_TODAY)).toEqual({ basic: null, insights: "read_insights", content: "pages_read_user_content" });
+    expect(missingStatsScopes("INSTAGRAM_PROFILE", GRANTED_TODAY)).toEqual({ basic: "instagram_basic", insights: "instagram_manage_insights", content: null });
   });
 
   it("con todo concedido no falta nada, y no confunde un permiso con otro parecido", () => {
-    expect(missingStatsScopes("FACEBOOK_PAGE", "pages_read_engagement, read_insights")).toEqual({ basic: null, insights: null });
-    expect(missingStatsScopes("INSTAGRAM_PROFILE", "instagram_basic,instagram_manage_insights")).toEqual({ basic: null, insights: null });
-    expect(missingStatsScopes("FACEBOOK_PAGE", "pages_read_engagement_extra,my_read_insights")).toEqual({ basic: "pages_read_engagement", insights: "read_insights" });
+    expect(missingStatsScopes("FACEBOOK_PAGE", "pages_read_engagement, read_insights,pages_read_user_content")).toEqual(NONE);
+    expect(missingStatsScopes("INSTAGRAM_PROFILE", "instagram_basic,instagram_manage_insights")).toEqual(NONE);
+    expect(missingStatsScopes("FACEBOOK_PAGE", "pages_read_engagement_extra,my_read_insights,pages_read_user_content_x")).toEqual({
+      basic: "pages_read_engagement",
+      insights: "read_insights",
+      content: "pages_read_user_content",
+    });
+  });
+
+  it("Instagram nunca pide el permiso de contenido de Facebook", () => {
+    expect(missingStatsScopes("INSTAGRAM_PROFILE", "instagram_basic,instagram_manage_insights").content).toBeNull();
   });
 
   it("si no se conocen los permisos, o la cuenta no es de publicacion, no bloquea nada", () => {
-    for (const scopes of [null, undefined, "  "]) expect(missingStatsScopes("FACEBOOK_PAGE", scopes)).toEqual({ basic: null, insights: null });
-    expect(missingStatsScopes("AD_ACCOUNT", GRANTED_TODAY)).toEqual({ basic: null, insights: null });
+    for (const scopes of [null, undefined, "  "]) expect(missingStatsScopes("FACEBOOK_PAGE", scopes)).toEqual(NONE);
+    expect(missingStatsScopes("AD_ACCOUNT", GRANTED_TODAY)).toEqual(NONE);
   });
 
   it("el mensaje dice que falta, que no se lee y como arreglarlo", () => {
@@ -64,6 +74,10 @@ describe("missingStatsScopes", () => {
     expect(insights).toMatch(/META_SCOPES/);
     expect(insights).toMatch(/Reconectar Meta/);
     expect(missingStatsMessage("Reservi", "pages_read_engagement", "basic")).toMatch(/ninguna cifra/);
+    const content = missingStatsMessage("Reservi", "pages_read_user_content", "content");
+    expect(content).toContain("pages_read_user_content");
+    expect(content).toMatch(/comentarios/);
+    expect(content).toMatch(/Reconectar Meta/);
   });
 });
 

@@ -52,7 +52,8 @@ export function classifyStatsError(e: unknown, accountKind: string): ClassifiedS
       return { kind: "network", message: "Meta tuvo un problema temporal. Se volverá a intentar." };
     }
     if (e.isPermissionError) {
-      const need = scopes ? `${scopes.basic} y ${scopes.insights}` : "los permisos de estadísticas";
+      const list = scopes ? ([scopes.basic, scopes.insights, scopes.content] as (string | null)[]).filter((s): s is string => !!s) : [];
+      const need = list.length ? `${list.slice(0, -1).join(", ")} y ${list[list.length - 1]}` : "los permisos de estadísticas";
       return {
         kind: "permission",
         message: `Meta no dejó leer las estadísticas: la app necesita ${need} y tu usuario debe tener acceso a la cuenta. Detalle de Meta: ${e.message.slice(0, 160)}`,
@@ -74,11 +75,23 @@ type InsightsResponse = {
   data?: { name?: string; values?: { value?: unknown }[]; total_value?: { value?: unknown } }[];
 };
 
+/**
+ * Valor de una metrica: un numero, o un desglose ({ like: 3, love: 1 }) que se suma. Un desglose vacio es 0 (Meta lo
+ * manda asi cuando no hay nada); uno con algo que no es numero se descarta antes que inventar una cifra.
+ */
+function readValue(raw: unknown): number | null {
+  if (raw !== null && typeof raw === "object") {
+    const parts = Object.values(raw as Record<string, unknown>).map(clampCount);
+    return parts.some((n) => n === null) ? null : parts.reduce<number>((a, n) => a + (n as number), 0);
+  }
+  return clampCount(raw);
+}
+
 function readInsights(res: InsightsResponse): Record<string, number | null> {
   const out: Record<string, number | null> = {};
   for (const item of res.data ?? []) {
     if (!item.name) continue;
-    out[item.name] = clampCount(item.values?.[0]?.value ?? item.total_value?.value);
+    out[item.name] = readValue(item.values?.[0]?.value ?? item.total_value?.value);
   }
   return out;
 }
@@ -129,6 +142,7 @@ async function readMetrics(path: string, token: string, metrics: string[], extra
 const METRIC_NAMES: Record<string, string> = {
   post_media_view: "vistas",
   post_total_media_view_unique: "alcance",
+  post_reactions_by_type_total: "reacciones",
   views: "vistas",
   reach: "alcance",
   saved: "guardados",
@@ -162,30 +176,60 @@ type FacebookPost = {
   shares?: { count?: unknown };
 };
 
+export type FacebookFetchOptions = FetchOptions & {
+  /**
+   * Pedir tambien las reacciones y los comentarios de la publicacion (permiso pages_read_user_content). Con `false`
+   * (ya se sabe que falta) no se intenta: las reacciones se calculan de los insights y los comentarios quedan sin dato.
+   */
+  userContent?: boolean;
+};
+
+/** Reacciones y comentarios son contenido de otras personas: Meta los lee con pages_read_user_content. */
+const FACEBOOK_CONTENT_FIELDS = "reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)";
+
 /**
- * Estadisticas de una publicacion de una pagina de Facebook (con el token de la pagina). Reacciones, comentarios y
- * compartidos salen de la publicacion misma (permiso pages_read_engagement); vistas y alcance, de sus insights
- * (permiso read_insights). Si falla lo primero se lanza el error: sin eso no hay nada que guardar.
+ * Estadisticas de una publicacion de una pagina de Facebook (con el token de la pagina). Los compartidos salen de la
+ * publicacion misma (pages_read_engagement); las reacciones y los comentarios tambien pero piden ademas
+ * pages_read_user_content; vistas y alcance salen de sus insights (read_insights).
+ *
+ * Sin pages_read_user_content Meta rechaza TODA la lectura de la publicacion con «(#10) This endpoint requires the
+ * 'pages_read_user_content' permission», asi que se pide aparte y, si falla, se sigue con lo que no lo necesita: las
+ * reacciones se calculan de los insights (`post_reactions_by_type_total`) y los comentarios quedan sin dato.
+ * Si falla incluso lo basico se lanza el error: no hay nada que guardar.
  */
-export async function fetchFacebookPostMetrics(page: Account, postId: string, opts: FetchOptions = {}): Promise<FetchedMetrics> {
-  const post = await graphGet<FacebookPost>(postId, {
-    token: page.token,
-    params: { fields: "reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0),shares" },
-  });
+export async function fetchFacebookPostMetrics(page: Account, postId: string, opts: FacebookFetchOptions = {}): Promise<FetchedMetrics> {
+  const notes: string[] = [];
+  let transient = false;
+  let withContent = opts.userContent !== false;
+  let post: FacebookPost = {};
+
+  if (withContent) {
+    try {
+      post = await graphGet<FacebookPost>(postId, { token: page.token, params: { fields: `${FACEBOOK_CONTENT_FIELDS},shares` } });
+    } catch (e) {
+      if (!(e instanceof MetaApiError) || !e.isPermissionError) throw e;
+      withContent = false;
+      notes.push(
+        `Meta no dejó leer los comentarios: falta el permiso ${STATS_SCOPE.FACEBOOK_PAGE.content} (o la función «Page Public Content Access»). Las reacciones se calculan de las estadísticas de la publicación y las interacciones no incluyen los comentarios.`,
+      );
+    }
+  }
+  if (!withContent) post = await graphGet<FacebookPost>(postId, { token: page.token, params: { fields: "shares" } });
+
   const metrics: PostMetrics = {
     ...EMPTY_METRICS,
-    likes: clampCount(post.reactions?.summary?.total_count) ?? 0,
-    comments: clampCount(post.comments?.summary?.total_count) ?? 0,
+    likes: withContent ? (clampCount(post.reactions?.summary?.total_count) ?? 0) : null,
+    comments: withContent ? (clampCount(post.comments?.summary?.total_count) ?? 0) : null,
     // Facebook omite `shares` cuando nadie la compartio.
     shares: clampCount(post.shares?.count) ?? 0,
   };
 
-  const notes: string[] = [];
-  let transient = false;
   if (opts.insights !== false) {
-    const res = await readMetrics(`${postId}/insights`, page.token, ["post_media_view", "post_total_media_view_unique"]);
+    const asked = ["post_media_view", "post_total_media_view_unique", ...(withContent ? [] : ["post_reactions_by_type_total"])];
+    const res = await readMetrics(`${postId}/insights`, page.token, asked);
     metrics.views = res.values.post_media_view ?? null;
     metrics.reach = res.values.post_total_media_view_unique ?? null;
+    if (!withContent) metrics.likes = res.values.post_reactions_by_type_total ?? null;
     transient = describeInsightsProblems(res, "FACEBOOK_PAGE", notes);
   }
   return { metrics, notes, transient };

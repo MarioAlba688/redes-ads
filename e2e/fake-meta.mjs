@@ -69,7 +69,7 @@ const DEFAULT_SCENARIO = {
   igProcessing: 0, // cuantas consultas del contenedor de Instagram responden IN_PROGRESS antes de FINISHED
   igContainer: "ok", // ok | error (el contenedor termina en ERROR)
   // --- estadisticas de lo publicado ---
-  stats: "ok", // ok | noinsights (sin permiso de insights) | badmetric (Meta retiro una metrica) | ratelimit (limite de uso) | gone (la publicacion ya no existe) | hidelikes (Instagram sin like_count)
+  stats: "ok", // ok | noinsights (sin permiso de insights) | nousercontent (sin pages_read_user_content: leer reacciones/comentarios da error) | badmetric (Meta retiro una metrica) | ratelimit (limite de uso) | gone (la publicacion ya no existe) | hidelikes (Instagram sin like_count)
   statsBoost: 0, // se suma a todas las cifras: sirve para comprobar que una nueva lectura las actualiza
 };
 
@@ -211,7 +211,7 @@ export function startFakeMeta(port, expectedRedirectUri) {
     if (path === "me") return json(res, 200, { id: "USER-1", name: "Mario Alba" });
 
     if (path === "me/permissions") {
-      const all = ["ads_read", "pages_show_list", "pages_read_engagement", "pages_manage_posts", "read_insights", "instagram_basic", "instagram_content_publish", "instagram_manage_insights"];
+      const all = ["ads_read", "pages_show_list", "pages_read_engagement", "pages_read_user_content", "pages_manage_posts", "read_insights", "instagram_basic", "instagram_content_publish", "instagram_manage_insights"];
       return json(res, 200, {
         data: all.map((permission) => ({ permission, status: scenario.perms === "noads" && permission === "ads_read" ? "declined" : "granted" })),
       });
@@ -306,6 +306,10 @@ export function startFakeMeta(port, expectedRedirectUri) {
       const wantsInsights = fbPost ? !!fbPost[3] : !!igMedia[2];
       if (!wantsInsights) {
         if (fbPost) {
+          // Como Meta de verdad: pedir reacciones o comentarios sin pages_read_user_content rechaza TODA la lectura.
+          if (scenario.stats === "nousercontent" && /reactions|comments/.test(p.get("fields") ?? "")) {
+            return graphError(res, 403, 10, "(#10) This endpoint requires the 'pages_read_user_content' permission or the 'Page Public Content Access' feature. Refer to https://developers.facebook.com/docs/apps/review/login-permissions");
+          }
           const s = fbStatsFor(Number(fbPost[2]), boost);
           return json(res, 200, {
             id: `${fbPost[1]}_${fbPost[2]}`,
@@ -324,7 +328,12 @@ export function startFakeMeta(port, expectedRedirectUri) {
       const values = fbPost
         ? (() => {
             const s = fbStatsFor(Number(fbPost[2]), boost);
-            return { post_media_view: s.views, ...(scenario.stats === "badmetric" ? {} : { post_total_media_view_unique: s.reach }) };
+            // El desglose por tipo de reaccion suma el total de reacciones.
+            return {
+              post_media_view: s.views,
+              post_reactions_by_type_total: { like: s.reactions - 2, love: 2 },
+              ...(scenario.stats === "badmetric" ? {} : { post_total_media_view_unique: s.reach }),
+            };
           })()
         : (() => {
             const s = igStatsFor(Number(igMedia[1]), boost);
