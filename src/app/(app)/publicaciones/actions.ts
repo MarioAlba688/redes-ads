@@ -249,10 +249,14 @@ export async function deleteDraft(_prev: FormState, formData: FormData): Promise
 
   const post = await db.post.findUnique({
     where: { id: id.data },
-    select: { status: true, media: { select: { storageKey: true } } },
+    select: { status: true, media: { select: { storageKey: true } }, targets: { select: { status: true } } },
   });
   if (!post) return { error: "Esa publicación ya no existe." };
-  if (post.status !== "DRAFT" && post.status !== "CANCELLED") return { error: "Solo se puede borrar un borrador o una publicación cancelada." };
+  if (post.status !== "DRAFT" && post.status !== "CANCELLED" && post.status !== "FAILED") {
+    return { error: "Solo se puede borrar un borrador, una publicación cancelada o una que falló." };
+  }
+  // Si alguno de sus destinos ya salio, la publicacion existe en una red social: se conserva el registro.
+  if (post.targets.some((t) => t.status === "PUBLISHED")) return { error: "Esta publicación ya salió en una red social, así que no se puede borrar de aquí." };
 
   await db.post.delete({ where: { id: id.data } }); // sus destinos y sus imagenes (filas) se borran en cascada
   for (const m of post.media) await deleteImage(m.storageKey); // y los archivos, que no los borra la base de datos

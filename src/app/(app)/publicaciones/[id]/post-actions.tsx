@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useTransition, type FormEvent, type ReactNode } from "react";
-import { approvePost, cancelPost, publishNowAction, retryPost, returnPost, schedulePost, submitForReview } from "./actions";
+import { approvePost, cancelPost, publishNowAction, reopenPost, retryPost, returnPost, schedulePost, submitForReview } from "./actions";
 import { Alert, Button, Card, Field, Input, Textarea } from "@/components/ui";
 import type { FormState } from "@/lib/form-state";
 import type { PostAction } from "@/lib/post-workflow";
@@ -187,6 +187,20 @@ export function PostActions({
             description="Vuelve a intentar solo los destinos que fallaron; los que ya salieron no se repiten."
             submitLabel="Reintentar los que fallaron"
             pendingLabel="Enviando…"
+          />
+        </div>
+      )}
+
+      {has("reopen") && (
+        <div className="p-5">
+          <ActionForm
+            postId={postId}
+            action={reopenPost}
+            title="Corregir y volver a enviar"
+            description="Vuelve a ser un borrador para que cambies el texto, las imágenes o los destinos. Después se envía a revisión otra vez. No se publicó en ninguna red, así que no se duplica nada."
+            submitLabel="Volver a borrador"
+            pendingLabel="Abriendo…"
+            variant="secondary"
           />
         </div>
       )}

@@ -7,6 +7,8 @@ import type { PostStatusName } from "@/lib/posts";
 //   DRAFT --enviar--> IN_REVIEW --aprobar--> APPROVED --programar--> SCHEDULED --(hora)--> PUBLISHING --> PUBLISHED
 //     ^                  |                       |                       |                                  PARTIAL
 //     '------devolver----'                       '-------cancelar--------'                                  FAILED --reintentar--> SCHEDULED
+//     ^                                                                                                                 |
+//     '------------------------------------------------ volver a borrador (para corregirla) ----------------------------'
 
 export type PostAction =
   | "submit" // el editor la envia a revision
@@ -15,7 +17,8 @@ export type PostAction =
   | "schedule" // ponerle fecha, o cambiarla
   | "publishNow" // publicarla ya
   | "cancel" // cancelarla
-  | "retry"; // reintentar los destinos que fallaron
+  | "retry" // reintentar los destinos que fallaron
+  | "reopen"; // volver a borrador una que fallo, para corregirla y enviarla a revision otra vez
 
 type Rule = { from: readonly PostStatusName[]; permission: Permission; label: string };
 
@@ -27,6 +30,8 @@ const RULES: Record<PostAction, Rule> = {
   publishNow: { from: ["APPROVED", "SCHEDULED"], permission: "content.publish", label: "Publicar ahora" },
   cancel: { from: ["IN_REVIEW", "APPROVED", "SCHEDULED"], permission: "content.publish", label: "Cancelar" },
   retry: { from: ["FAILED", "PARTIAL"], permission: "content.publish", label: "Reintentar" },
+  // Solo FAILED: ningun destino salio, asi que corregirla y volver a enviarla no duplica nada. PARTIAL ya esta en una red.
+  reopen: { from: ["FAILED"], permission: "content.create", label: "Volver a borrador" },
 };
 
 export const ACTION_LABELS: Record<PostAction, string> = Object.fromEntries(

@@ -25,6 +25,7 @@ const ACTION_PERMISSION = {
   publishNow: "content.publish",
   cancel: "content.publish",
   retry: "content.publish",
+  reopen: "content.create",
 } as const satisfies Record<PostAction, "content.create" | "content.approve" | "content.publish">;
 
 type Loaded = NonNullable<Awaited<ReturnType<typeof load>>>;
@@ -210,6 +211,24 @@ export async function retryPost(_prev: FormState, formData: FormData): Promise<F
     data: { status: "PENDING", attempts: 0, error: null, nextAttemptAt: null, lockedAt: null },
   });
   return sendNow(p.post.id, p.user.id, ["FAILED", "PARTIAL"], "post.retry");
+}
+
+/**
+ * Una publicacion que fallo vuelve a ser borrador para poder corregirla (texto, imagenes, destinos) y enviarla a
+ * revision otra vez. Sus destinos quedan pendientes y limpios; como ninguno llego a salir, nada se duplica.
+ */
+export async function reopenPost(_prev: FormState, formData: FormData): Promise<FormState> {
+  const p = await prepare("reopen", formData);
+  if ("error" in p) return { error: p.error };
+  const ok = await move(p.post.id, ["FAILED"], { status: "DRAFT", scheduledAt: null, publishedAt: null });
+  if (!ok) return { error: "La publicación cambió mientras tanto. Recarga la página." };
+  await db.postTarget.updateMany({
+    where: { postId: p.post.id, status: "FAILED" },
+    data: { status: "PENDING", attempts: 0, error: null, nextAttemptAt: null, lockedAt: null },
+  });
+  await audit("post.reopened", { userId: p.user.id, target: p.post.id });
+  refresh(p.post.id);
+  return { success: "Volvió a ser un borrador: corrígela y envíala a revisión de nuevo." };
 }
 
 export async function cancelPost(_prev: FormState, formData: FormData): Promise<FormState> {

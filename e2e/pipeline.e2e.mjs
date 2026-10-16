@@ -526,6 +526,38 @@ try {
   check("y no se publicó nada en Instagram", !fake.published().slice(published2).some((p) => p.kind === "ig-publish"));
   calm();
 
+  // ------------------------------------------------------------ 3c. las que fallaron: volver a borrador para corregirlas, o borrarlas
+  const failedA = await makePost({ status: "FAILED", targets: ["acc-fb-reservi"], targetStatus: "FAILED", image: "jpg" });
+  await db.sql("UPDATE PostTarget SET attempts=4, error='Meta rechazó la publicación: prueba' WHERE postId=?", [failedA.id]);
+  await aura.goto(`${APP}/publicaciones/${failedA.id}`);
+  check("quien aprueba ve «Reintentar» en una que falló, pero no puede volver a borrador ni borrarla", (await aura.getByRole("button", { name: "Reintentar los que fallaron" }).count()) === 1 && (await aura.getByRole("button", { name: "Volver a borrador" }).count()) === 0 && (await aura.getByRole("button", { name: "Borrar" }).count()) === 0);
+  await edgar.goto(`${APP}/publicaciones/${failedA.id}`);
+  check("el editor ve «Volver a borrador» y «Borrar» en una que falló, y no puede reintentar ni publicar", (await edgar.getByRole("button", { name: "Volver a borrador" }).count()) === 1 && (await edgar.getByRole("button", { name: "Borrar" }).count()) === 1 && (await edgar.getByRole("button", { name: "Reintentar los que fallaron" }).count()) === 0);
+  await edgar.getByRole("button", { name: "Volver a borrador" }).click();
+  check("«Volver a borrador» la deja como borrador, sin fecha", await waitPost(failedA.id, ["DRAFT"], 15_000));
+  const reopenedTargets = await targetsOf(failedA.id);
+  check("sus destinos quedan pendientes y limpios (sin intentos ni error)", reopenedTargets.length === 1 && reopenedTargets[0].status === "PENDING" && reopenedTargets[0].attempts === 0 && reopenedTargets[0].error === null);
+  await edgar.reload();
+  check("y ya se puede editar: aparece el editor con su texto y su imagen", (await edgar.locator("#text").inputValue()) === failedA.text && (await edgar.getByAltText("Imagen de la publicación").count()) === 1);
+  check("queda en la auditoría", (await db.sql("SELECT COUNT(*) c FROM AuditLog WHERE action='post.reopened' AND target=?", [failedA.id]))[0].c === 1n);
+
+  const failedB = await makePost({ status: "FAILED", targets: ["acc-fb-reservi"], targetStatus: "FAILED", image: "jpg" });
+  const failedBKey = (await db.sql("SELECT storageKey FROM PostMedia WHERE postId=?", [failedB.id]))[0].storageKey;
+  await edgar.goto(`${APP}/publicaciones/${failedB.id}`);
+  edgar.once("dialog", (d) => d.accept());
+  await edgar.getByRole("button", { name: "Borrar" }).click();
+  await edgar.waitForURL(`${APP}/publicaciones`);
+  check("borrar una que falló la quita de la base, con sus destinos e imagen (también el archivo)", Number((await db.sql("SELECT COUNT(*) c FROM Post WHERE id=?", [failedB.id]))[0].c) === 0 && Number((await db.sql("SELECT COUNT(*) c FROM PostTarget WHERE postId=?", [failedB.id]))[0].c) === 0 && !mediaFiles().includes(failedBKey));
+
+  const partialC = await makePost({ status: "PARTIAL", targets: ["acc-fb-reservi", "acc-ig-reservi"], targetStatus: "FAILED" });
+  await db.sql("UPDATE PostTarget SET status='PUBLISHED', externalId='P-1_1', externalUrl='https://www.facebook.com/P-1_1' WHERE postId=? AND accountId='acc-fb-reservi'", [partialC.id]);
+  await edgar.goto(`${APP}/publicaciones/${partialC.id}`);
+  check("una que salió a medias (ya está en una red) no se puede borrar ni volver a borrador", (await edgar.getByRole("button", { name: "Borrar" }).count()) === 0 && (await edgar.getByRole("button", { name: "Volver a borrador" }).count()) === 0);
+
+  const cancelledD = await makePost({ status: "CANCELLED", targets: ["acc-fb-reservi"] });
+  await edgar.goto(`${APP}/publicaciones/${cancelledD.id}`);
+  check("una cancelada sí se puede borrar", (await edgar.getByRole("button", { name: "Borrar" }).count()) === 1);
+
   // ------------------------------------------------------------ 4. «publicar ahora» y choque entre procesos
   // A (con worker) y B (sin worker, pero que publica al pulsar el botón) compiten por las mismas filas.
   const racers = [];

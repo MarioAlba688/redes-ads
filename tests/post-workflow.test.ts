@@ -3,7 +3,7 @@ import { ROLES } from "@/lib/permissions";
 import { POST_STATUSES, type PostStatusName } from "@/lib/posts";
 import { availableActions, canTransition, FINAL_STATUSES, scheduleError, type PostAction } from "@/lib/post-workflow";
 
-const ALL_ACTIONS: PostAction[] = ["submit", "return", "approve", "schedule", "publishNow", "cancel", "retry"];
+const ALL_ACTIONS: PostAction[] = ["submit", "return", "approve", "schedule", "publishNow", "cancel", "retry", "reopen"];
 
 describe("transiciones por estado", () => {
   it("el flujo normal: borrador -> revision -> aprobada -> programada", () => {
@@ -15,7 +15,7 @@ describe("transiciones por estado", () => {
   });
 
   it("no se puede saltar la revision: un borrador no se programa ni se publica", () => {
-    for (const a of ["approve", "schedule", "publishNow", "return", "retry"] as const) {
+    for (const a of ["approve", "schedule", "publishNow", "return", "retry", "reopen"] as const) {
       expect(canTransition("DRAFT", a), a).toBe(false);
     }
   });
@@ -30,10 +30,12 @@ describe("transiciones por estado", () => {
     for (const a of ALL_ACTIONS) expect(canTransition("PUBLISHING", a), a).toBe(false);
   });
 
-  it("una publicacion que fallo o salio a medias solo se puede reintentar", () => {
-    for (const status of ["FAILED", "PARTIAL"] as const) {
-      expect(ALL_ACTIONS.filter((a) => canTransition(status, a))).toEqual(["retry"]);
-    }
+  it("una publicacion que salio a medias solo se puede reintentar (ya esta en una red social)", () => {
+    expect(ALL_ACTIONS.filter((a) => canTransition("PARTIAL", a))).toEqual(["retry"]);
+  });
+
+  it("una que fallo se puede reintentar tal cual o volver a borrador para corregirla", () => {
+    expect(ALL_ACTIONS.filter((a) => canTransition("FAILED", a))).toEqual(["retry", "reopen"]);
   });
 
   it("cada estado tiene al menos una forma de llegar a el o es el inicial", () => {
@@ -56,6 +58,13 @@ describe("acciones por rol", () => {
     expect(actions("IN_REVIEW", "APPROVER")).toEqual(["return", "approve", "cancel"]);
     expect(actions("APPROVED", "APPROVER")).toEqual(["schedule", "publishNow", "cancel"]);
     expect(actions("FAILED", "APPROVER")).toEqual(["retry"]);
+  });
+
+  it("volver a borrador una que fallo es de quien crea contenido (editor y administrador), no del aprobador", () => {
+    expect(actions("FAILED", "EDITOR")).toEqual(["reopen"]);
+    expect(actions("FAILED", "ADMIN")).toEqual(["retry", "reopen"]);
+    expect(actions("FAILED", "VIEWER")).toEqual([]);
+    expect(actions("PARTIAL", "EDITOR")).toEqual([]);
   });
 
   it("el administrador puede todo lo que el estado permite", () => {

@@ -32,6 +32,7 @@ const EVENT_LABELS: Record<string, string> = {
   "post.media_added": "añadió una imagen",
   "post.media_removed": "quitó una imagen",
   "post.media_moved": "cambió el orden de las imágenes",
+  "post.reopened": "la volvió a borrador para corregirla",
   "post.submitted": "la envió a revisión",
   "post.returned": "la devolvió con una nota",
   "post.approved": "la aprobó",
@@ -76,6 +77,8 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
   const missingMedia = new Set((await Promise.all(post.media.map(async (m) => ((await imageExists(m.storageKey)) ? null : m.id)))).filter((x): x is string => x !== null));
   // Restaurar solo en lo que ya salio: lo aprobado o programado no se cambia.
   const canRestore = canWrite && (status === "PUBLISHED" || status === "PARTIAL");
+  // Se puede borrar lo que no salió en ninguna red: borrador (su propio botón), cancelada o fallida.
+  const deletable = canWrite && (status === "FAILED" || status === "CANCELLED");
   const dateFmt = dateTimeFormat();
   const tz = post.brand.timezone;
   const whenFmt = new Intl.DateTimeFormat("es", { dateStyle: "full", timeStyle: "short", timeZone: tz });
@@ -297,9 +300,15 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
           )}
         </div>
       </Card>
-      {actions.length > 0 && (
-        <div className="mt-6">
-          <PostActions postId={post.id} actions={actions} timezone={tz} {...times} scheduled={status === "SCHEDULED"} />
+      {(actions.length > 0 || deletable) && (
+        <div className="mt-6 space-y-6">
+          {actions.length > 0 && <PostActions postId={post.id} actions={actions} timezone={tz} {...times} scheduled={status === "SCHEDULED"} />}
+          {deletable && (
+            <Card className="flex items-center justify-between gap-4 p-5">
+              <p className="text-sm text-muted">Borrar esta publicación no se puede deshacer. No borra nada de Facebook ni de Instagram.</p>
+              <DeleteDraftForm postId={post.id} />
+            </Card>
+          )}
         </div>
       )}
       {history}
