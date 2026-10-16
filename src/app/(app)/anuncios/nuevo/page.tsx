@@ -4,6 +4,7 @@ import { Card, PageHeader } from "@/components/ui";
 import { requireUser } from "@/lib/auth/dal";
 import { db } from "@/lib/db";
 import { dateTimeFormat } from "@/lib/display-time";
+import { imageExists } from "@/lib/media";
 import { missingAdsWriteScope } from "@/lib/meta/scopes";
 import { budgetDecimals } from "@/lib/promotions/currency";
 import { monthSpendByAccount } from "@/lib/promotions/spend";
@@ -58,7 +59,7 @@ export default async function NewPromotionPage({ searchParams }: PageProps<"/anu
           where: { status: { not: "CANCELLED" } },
           orderBy: { createdAt: "desc" },
           take: 60,
-          select: { id: true, text: true, brandId: true, status: true, media: { take: 1, select: { id: true } } },
+          select: { id: true, text: true, brandId: true, status: true, media: { take: 1, orderBy: { position: "asc" }, select: { storageKey: true } } },
         })
       : Promise.resolve([]),
   ]);
@@ -79,13 +80,20 @@ export default async function NewPromotionPage({ searchParams }: PageProps<"/anu
     brandId: t.post.brandId,
     label: `${excerpt(t.post.text, 70)} · ${t.account.kind === "INSTAGRAM_PROFILE" ? "Instagram" : "Facebook"} ${t.account.name}${t.publishedAt ? ` · ${dayFmt.format(t.publishedAt)}` : ""}`,
   }));
-  const postOptions: PostOption[] = posts.map((p) => ({
-    id: p.id,
-    brandId: p.brandId,
-    text: p.text,
-    hasImage: p.media.length > 0,
-    label: `${excerpt(p.text, 70)} · ${POST_STATUS_LABELS[p.status as PostStatusName] ?? p.status}${p.media.length === 0 ? " · sin imagen" : ""}`,
-  }));
+  // La imagen cuenta si esta registrada Y su archivo esta en este servidor (si no, hay que restaurarla).
+  const fileThere = await Promise.all(posts.map((p) => (p.media[0] ? imageExists(p.media[0].storageKey) : Promise.resolve(false))));
+  const postOptions: PostOption[] = posts.map((p, i) => {
+    const registered = p.media.length > 0;
+    const imageMissing = registered && !fileThere[i];
+    return {
+      id: p.id,
+      brandId: p.brandId,
+      text: p.text,
+      hasImage: registered && !imageMissing,
+      imageMissing,
+      label: `${excerpt(p.text, 70)} · ${POST_STATUS_LABELS[p.status as PostStatusName] ?? p.status}${!registered ? " · sin imagen" : imageMissing ? " · imagen perdida" : ""}`,
+    };
+  });
   const pages: PageOption[] = pageAccounts.map((p) => ({ id: p.id, name: p.name, brandId: p.brandId as string }));
 
   const tab = (href: string, label: string, active: boolean) => (

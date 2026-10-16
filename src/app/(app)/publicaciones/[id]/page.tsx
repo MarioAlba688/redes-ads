@@ -7,7 +7,7 @@ import { requireUser } from "@/lib/auth/dal";
 import { db } from "@/lib/db";
 import { dateTimeFormat } from "@/lib/display-time";
 import { formatInt } from "@/lib/format";
-import { mediaPath } from "@/lib/media";
+import { imageExists, mediaPath } from "@/lib/media";
 import { can } from "@/lib/permissions";
 import { ACCOUNT_KIND_LABELS } from "@/lib/platforms";
 import { availableActions } from "@/lib/post-workflow";
@@ -22,6 +22,7 @@ import { interactions } from "@/lib/stats/metrics";
 import { formatLocalInput } from "@/lib/time";
 import { Composer, DeleteDraftForm } from "../composer";
 import { PostActions } from "./post-actions";
+import { RestoreImage } from "./restore-image";
 
 export const metadata: Metadata = { title: "Publicación" };
 
@@ -70,6 +71,10 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
 
   const status = post.status as PostStatusName;
   const canWrite = can(user.role, "content.create");
+  // Imagenes que la base de datos conoce pero cuyo archivo ya no esta en este servidor (redespliegue sin volumen, o otra copia de la app).
+  const missingMedia = new Set((await Promise.all(post.media.map(async (m) => ((await imageExists(m.storageKey)) ? null : m.id)))).filter((x): x is string => x !== null));
+  // Restaurar solo en lo que ya salio: lo aprobado o programado no se cambia.
+  const canRestore = canWrite && (status === "PUBLISHED" || status === "PARTIAL");
   const dateFmt = dateTimeFormat();
   const tz = post.brand.timezone;
   const whenFmt = new Intl.DateTimeFormat("es", { dateStyle: "full", timeStyle: "short", timeZone: tz });
@@ -167,7 +172,7 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
             aiGenerated: post.aiGenerated,
             aiBrief: post.aiBrief,
           }}
-          media={post.media.map((m) => ({ id: m.id, url: mediaPath(m.storageKey), width: m.width, height: m.height, name: m.originalName }))}
+          media={post.media.map((m) => ({ id: m.id, url: mediaPath(m.storageKey), width: m.width, height: m.height, name: m.originalName, missing: missingMedia.has(m.id) }))}
           ai={{ ...ai, canManage: can(user.role, "ai.manage") }}
         />
         <div className="mt-6 space-y-6">
@@ -187,11 +192,15 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
       {header}
       <Card className="space-y-5 p-5">
         <p className="whitespace-pre-wrap text-sm">{post.text}</p>
-        {post.media.map((m) => (
-          // Imagen dinamica servida por nuestra ruta /media: next/image no aporta nada aqui.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img key={m.id} src={mediaPath(m.storageKey)} alt="Imagen de la publicación" className="max-h-72 max-w-full rounded-lg border border-border" />
-        ))}
+        {post.media.map((m) =>
+          missingMedia.has(m.id) ? (
+            <RestoreImage key={m.id} postId={post.id} mediaId={m.id} width={m.width} height={m.height} canRestore={canRestore} />
+          ) : (
+            // Imagen dinamica servida por nuestra ruta /media: next/image no aporta nada aqui.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img key={m.id} src={mediaPath(m.storageKey)} alt="Imagen de la publicación" className="max-h-72 max-w-full rounded-lg border border-border" />
+          ),
+        )}
         {post.linkUrl && (
           <p className="text-sm">
             <span className="text-muted">Enlace: </span>

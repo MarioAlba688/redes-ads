@@ -6,7 +6,15 @@ import { removeMedia } from "./actions";
 import { SubmitButton } from "@/components/submit-button";
 import { Alert } from "@/components/ui";
 
-export type MediaItem = { id: string; url: string; width: number | null; height: number | null; name: string | null };
+export type MediaItem = {
+  id: string;
+  url: string;
+  width: number | null;
+  height: number | null;
+  name: string | null;
+  /** La base de datos la conoce pero su archivo ya no esta en el servidor. */
+  missing?: boolean;
+};
 
 const MAX_BYTES = 8 * 1024 * 1024;
 
@@ -97,9 +105,17 @@ export function MediaUploader({ postId, media }: { postId: string; media: MediaI
 
       {current ? (
         <div className="flex flex-wrap items-start gap-4">
-          {/* Imagen dinamica servida por nuestra ruta /media (con sesion): next/image no aporta nada aqui. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={current.url} alt="Imagen de la publicación" className="max-h-64 max-w-full rounded-lg border border-border" />
+          {current.missing ? (
+            <p className="max-w-sm rounded-lg border border-dashed border-warning/60 bg-warning-bg px-3 py-2 text-sm text-warning">
+              El archivo de esta imagen ya no está en el servidor. Quítala y vuelve a subirla.
+            </p>
+          ) : (
+            <>
+              {/* Imagen dinamica servida por nuestra ruta /media (con sesion): next/image no aporta nada aqui. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={current.url} alt="Imagen de la publicación" className="max-h-64 max-w-full rounded-lg border border-border" />
+            </>
+          )}
           <div className="space-y-2 text-sm">
             <p className="text-muted">
               {current.width && current.height ? `${current.width} × ${current.height} px` : ""}

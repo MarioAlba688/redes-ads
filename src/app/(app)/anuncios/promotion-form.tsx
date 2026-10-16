@@ -33,7 +33,16 @@ export type AccountOption = {
   blocked: string | null;
 };
 export type BoostOption = { targetId: string; label: string; brandId: string };
-export type PostOption = { id: string; label: string; text: string; brandId: string; hasImage: boolean };
+export type PostOption = {
+  id: string;
+  label: string;
+  text: string;
+  brandId: string;
+  /** Tiene imagen registrada Y su archivo esta en este servidor. */
+  hasImage: boolean;
+  /** Esta registrada pero su archivo se perdio (hay que restaurarla en la publicacion). */
+  imageMissing: boolean;
+};
 export type PageOption = { id: string; name: string; brandId: string };
 
 const excerpt = (text: string, max: number) => {
@@ -97,6 +106,7 @@ export function PromotionForm({
     if (!source) list.push(kind === "BOOST" ? "Elige la publicación que quieres impulsar." : "Elige la publicación de la que sale el anuncio.");
     if (!account) list.push("Elige una cuenta publicitaria.");
     else if (account.blocked) list.push(account.blocked);
+    if (post?.imageMissing) list.push("La imagen de esa publicación ya no está en el servidor: vuelve a subirla en la publicación o elige otra.");
     if (kind === "AD" && !pageAccountId) list.push("Esa marca no tiene una página de Facebook conectada para publicar el anuncio.");
     if (budgetText.trim() === "") list.push("Escribe el presupuesto diario.");
     else if (budget === null) list.push(`No entiendo el presupuesto «${budgetText}»: escríbelo en ${currency ?? "la moneda de la cuenta"}${budgetDecimals(currency) === 0 ? " sin decimales (50000 o 50.000)" : " con hasta 2 decimales (10,50)"}.`);
@@ -111,7 +121,7 @@ export function PromotionForm({
           targeting,
           creative: { message, headline: headline.trim() || null, link: link.trim() || null, cta, imageKey: post?.hasImage ? "x" : null },
         },
-        { currency, cap: account?.cap ?? null, hasImage: kind === "AD" ? (post?.hasImage ?? false) : undefined },
+        { currency, cap: account?.cap ?? null, hasImage: kind === "AD" ? ((post?.hasImage ?? false) || (post?.imageMissing ?? false)) : undefined },
       ).filter((e) => !(budget === null && /presupuesto diario (debe|en)/i.test(e))),
     );
     return Array.from(new Set(list));
@@ -218,7 +228,16 @@ export function PromotionForm({
       {kind === "AD" && (
         <Card className="space-y-4 p-5">
           <h2 className="font-semibold">El anuncio</h2>
-          {post && !post.hasImage && <Alert tone="warning">Esa publicación no tiene imagen: el anuncio la necesita. Agrégale una en Publicaciones.</Alert>}
+          {post && post.imageMissing && (
+            <Alert tone="warning">
+              La imagen de esa publicación ya no está en el servidor (se pierde si el servidor se redespliega sin un volumen para las imágenes).{" "}
+              <a href={`/publicaciones/${post.id}`} className="font-medium underline">
+                Abre la publicación para volver a subirla
+              </a>
+              , o elige otra.
+            </Alert>
+          )}
+          {post && !post.hasImage && !post.imageMissing && <Alert tone="warning">Esa publicación no tiene imagen: el anuncio la necesita. Agrégale una en Publicaciones.</Alert>}
           <Field label="Texto" htmlFor="texto">
             <Textarea id="texto" value={message} onChange={(e) => setMessageEdit(e.target.value)} rows={5} disabled={pending} />
           </Field>

@@ -575,7 +575,7 @@ export default async function ManualPage() {
                 todo lo que no está en un volumen se borra al redesplegar), o la publicación se creó en <UI>otra copia de la app</UI> que usa la misma base de datos (por ejemplo tu PC y el servidor): los archivos están en el disco de quien los subió.
               </p>
               <p>
-                Para arreglar lo ya perdido, vuelve a subir la imagen en la publicación (en Publicaciones, <UI>Quitar imagen</UI> y subirla otra vez). Impulsar una publicación <em>ya publicada</em> no necesita la imagen: solo la usa «Anuncio nuevo». Para que no se repita,
+                Para recuperar lo ya perdido: si la publicación <UI>ya salió</UI>, ábrela en Publicaciones; verás «El archivo de esta imagen ya no está en el servidor» con un botón para <UI>volver a subirla</UI>. Tiene que ser la imagen <em>original</em> (la app comprueba que mida lo mismo: así no sirve para cambiar una publicación). Si es un <UI>borrador</UI>, usa <UI>Quitar imagen</UI> y súbela otra vez. Impulsar una publicación <em>ya publicada</em> no necesita la imagen: solo la usa «Anuncio nuevo». Para que no se repita,
                 pon <code>MEDIA_DIR</code> en un volumen persistente (en Easypanel: <UI>Mounts → Volume</UI> con la ruta <code>/data/media</code>) y usa una sola copia de la app contra cada base de datos. En «Tu estado ahora» verás cuántas imágenes faltan.
               </p>
             </Problem>

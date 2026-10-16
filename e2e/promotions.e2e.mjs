@@ -52,6 +52,12 @@ function encrypt(plain) {
   return ["v1", iv.toString("base64url"), cipher.getAuthTag().toString("base64url"), data.toString("base64url")].join(".");
 }
 const tag = () => randomBytes(3).toString("hex");
+/** JPEG minimo con un SOF0 que declara el tamano (la app solo lee la cabecera). */
+function jpeg(width, height) {
+  const parts = [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, ...Array(14).fill(0)];
+  parts.push(0xff, 0xc0, 0x00, 0x11, 0x08, height >> 8, height & 255, width >> 8, width & 255, 0x03, ...Array(9).fill(0), 0xff, 0xd9);
+  return Buffer.from(parts);
+}
 const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 const MEDIA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "redes-e2e-promo-media-"));
@@ -362,18 +368,74 @@ try {
   check("una publicación sin imagen avisa que el anuncio la necesita", (await edgar.getByText(/no tiene imagen: el anuncio la necesita/).count()) === 1);
 
   // El archivo de la imagen ya no esta en el servidor (redespliegue sin volumen, o la publicacion se creo en otra copia de la app)
+  // (a) el formulario ya sabe que la imagen se perdio: lo dice y manda a restaurarla
+  const lost2 = await makePost({ text: `Imagen ya perdida ${tag()}`, status: "DRAFT" });
+  fs.rmSync(path.join(MEDIA_DIR, lost2.storageKey));
+  await edgar.goto(`${APP}/anuncios/nuevo?tipo=anuncio&publicacion=${lost2.id}`);
+  await edgar.locator("#cuenta").selectOption(ACC_COP);
+  check("si la imagen de la publicación ya se perdió, el formulario lo dice y lleva a volver a subirla", (await edgar.getByText(/La imagen de esa publicación ya no está en el servidor/).count()) >= 1 && (await edgar.getByRole("link", { name: "Abre la publicación para volver a subirla" }).getAttribute("href")) === `/publicaciones/${lost2.id}` && (await edgar.locator("#fuente option", { hasText: "imagen perdida" }).count()) >= 1);
+
+  // (b) el archivo desaparece justo despues de abrir el formulario: el servidor lo detecta y no deja nada a medias
   const lost = await makePost({ text: `Imagen perdida ${tag()}`, status: "DRAFT" });
-  fs.rmSync(path.join(MEDIA_DIR, lost.storageKey));
   await edgar.goto(`${APP}/anuncios/nuevo?tipo=anuncio&publicacion=${lost.id}`);
   await edgar.locator("#cuenta").selectOption(ACC_COP);
   await edgar.locator("#presupuesto").fill("20000");
   await edgar.locator("#enlace").fill("https://reservi.co");
+  fs.rmSync(path.join(MEDIA_DIR, lost.storageKey));
   await submit(edgar);
   const lostMsg = await formError(edgar);
   check("si el archivo de la imagen ya no está, lo explica (volumen de MEDIA_DIR, otra copia de la app) y dice qué hacer", /No se encontró el archivo de la imagen en este servidor/.test(lostMsg) && /MEDIA_DIR/.test(lostMsg) && /Vuelve a subir la imagen/.test(lostMsg), lostMsg);
   const lostCamps = metaAds().campaigns.filter((c) => c.name.startsWith("Anuncio: Imagen perdida"));
   check("y no queda nada creado en Meta (se borra lo que se alcanzó a crear)", lostCamps.length === 1 && lostCamps.every((c) => c.status === "DELETED") && metaAds().ads.filter((a) => a.name.startsWith("Anuncio: Imagen perdida")).length === 0);
   check("el registro queda como «No se pudo crear»", (await db.sql("SELECT status FROM AdPromotion WHERE name LIKE 'Anuncio: Imagen perdida%'"))[0]?.status === "FAILED");
+
+  // ------------------------------------------------------------ 6b. restaurar la imagen perdida de una publicacion YA publicada
+  const gone = await makePost({ text: `Publicada sin archivo ${tag()}`, status: "PUBLISHED", targets: [{ account: "acc-fb", externalId: "P-1_77" }] });
+  fs.rmSync(path.join(MEDIA_DIR, gone.storageKey));
+  const mediaUrl = `${APP}/api/posts/${gone.id}/media/${gone.id}-m`;
+  const jpgFile = (name, w, h) => ({ name, mimeType: "image/jpeg", buffer: jpeg(w, h) });
+
+  await edgar.goto(`${APP}/publicaciones/${gone.id}`);
+  check("la ficha de una publicación publicada avisa que el archivo de la imagen se perdió y ofrece volver a subirlo", (await edgar.getByText("El archivo de esta imagen ya no está en el servidor.").count()) === 1 && (await edgar.locator(`#restaurar-${gone.id}-m`).count()) === 1);
+  await shot(edgar, "publicacion-imagen-perdida.png");
+  await vera.goto(`${APP}/publicaciones/${gone.id}`);
+  check("solo lectura ve el aviso pero no puede subir nada", (await vera.getByText("El archivo de esta imagen ya no está en el servidor.").count()) === 1 && (await vera.locator(`#restaurar-${gone.id}-m`).count()) === 0);
+
+  await edgar.locator(`#restaurar-${gone.id}-m`).setInputFiles(jpgFile("otra.jpg", 500, 500));
+  await edgar.getByText(/La imagen debe ser la original: medir 1080 × 1350 px y esta mide 500 × 500/).waitFor();
+  check("una imagen de otro tamaño se rechaza (debe ser la original) y no cambia nada", (await db.sql("SELECT storageKey FROM PostMedia WHERE id=?", [`${gone.id}-m`]))[0].storageKey === gone.storageKey && !fs.existsSync(path.join(MEDIA_DIR, gone.storageKey)));
+  await edgar.locator(`#restaurar-${gone.id}-m`).setInputFiles({ name: "texto.jpg", mimeType: "image/jpeg", buffer: Buffer.from("no soy una imagen") });
+  await edgar.getByText(/no es una imagen/i).first().waitFor();
+  check("un archivo que no es una imagen se rechaza por su contenido", true);
+
+  const original = jpeg(1080, 1350);
+  await edgar.locator(`#restaurar-${gone.id}-m`).setInputFiles({ name: "original.jpg", mimeType: "image/jpeg", buffer: original });
+  check("con la imagen original el aviso desaparece y la imagen vuelve a verse", await until(async () => (await edgar.locator(`#restaurar-${gone.id}-m`).count()) === 0 && (await edgar.getByAltText("Imagen de la publicación").count()) === 1));
+  const restoredRow = (await db.sql("SELECT storageKey, size FROM PostMedia WHERE id=?", [`${gone.id}-m`]))[0];
+  check("el archivo quedó en la carpeta de imágenes (con un nombre nuevo) y registrado en la base", restoredRow.storageKey !== gone.storageKey && fs.existsSync(path.join(MEDIA_DIR, restoredRow.storageKey)) && sha(fs.readFileSync(path.join(MEDIA_DIR, restoredRow.storageKey))) === sha(original) && Number(restoredRow.size) === original.length);
+  check("queda en la auditoría", (await db.sql("SELECT COUNT(*) c FROM AuditLog WHERE action='post.media_restored'"))[0].c > 0n);
+
+  const again = await edgar.context().request.post(mediaUrl, { multipart: { file: jpgFile("x.jpg", 1080, 1350) }, headers: { origin: APP } });
+  check("si el archivo ya está en el servidor no se puede reemplazar", again.status() === 409 && /no hace falta restaurarlo/.test((await again.json()).error));
+
+  const approved = await makePost({ text: `Aprobada con archivo perdido ${tag()}`, status: "APPROVED", targets: [{ account: "acc-fb", externalId: "P-1_78" }] });
+  await db.sql("UPDATE PostTarget SET status='PENDING', externalId=NULL WHERE postId=?", [approved.id]);
+  fs.rmSync(path.join(MEDIA_DIR, approved.storageKey));
+  const notAllowed = await edgar.context().request.post(`${APP}/api/posts/${approved.id}/media/${approved.id}-m`, { multipart: { file: jpgFile("x.jpg", 1080, 1350) }, headers: { origin: APP } });
+  check("lo aprobado o programado NO se puede cambiar por esta vía (solo lo ya publicado)", notAllowed.status() === 409 && /ya se publicó/.test((await notAllowed.json()).error) && (await db.sql("SELECT storageKey FROM PostMedia WHERE id=?", [`${approved.id}-m`]))[0].storageKey === approved.storageKey);
+
+  const gone2 = await makePost({ text: `Publicada sin archivo 2 ${tag()}`, status: "PUBLISHED", targets: [{ account: "acc-fb", externalId: "P-1_79" }] });
+  fs.rmSync(path.join(MEDIA_DIR, gone2.storageKey));
+  const viewerTry = await vera.context().request.post(`${APP}/api/posts/${gone2.id}/media/${gone2.id}-m`, { multipart: { file: jpgFile("x.jpg", 1080, 1350) }, headers: { origin: APP } });
+  check("solo lectura no puede restaurar una imagen (aunque arme la petición a mano)", viewerTry.status() === 401 && !fs.existsSync(path.join(MEDIA_DIR, gone2.storageKey)));
+  const evil = await edgar.context().request.post(`${APP}/api/posts/${gone2.id}/media/${gone2.id}-m`, { multipart: { file: jpgFile("x.jpg", 1080, 1350) }, headers: { origin: "https://sitio-malicioso.example" } });
+  check("una petición de otro sitio se rechaza", evil.status() === 403);
+  const wrongPost = await edgar.context().request.post(`${APP}/api/posts/${gone.id}/media/${gone2.id}-m`, { multipart: { file: jpgFile("x.jpg", 1080, 1350) }, headers: { origin: APP } });
+  check("una imagen no se puede restaurar a través de otra publicación", wrongPost.status() === 404);
+
+  // Con la imagen restaurada, esa publicación ya sirve para un anuncio nuevo
+  await edgar.goto(`${APP}/anuncios/nuevo?tipo=anuncio&publicacion=${gone.id}`);
+  check("y el formulario de anuncio nuevo deja de avisar de la imagen perdida de esa publicación", (await edgar.getByText(/ya no está en el servidor/).count()) === 0 && !(await edgar.locator(`#fuente option[value="${gone.id}"]`).innerText()).includes("imagen perdida"));
 
   // ------------------------------------------------------------ 7. proteccion del dinero: nada queda a medias ni mal convertido
   const before = metaAds();
