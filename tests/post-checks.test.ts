@@ -30,6 +30,26 @@ describe("validatePostForReview", () => {
     expect(validatePostForReview({ ...base, targets: [fb], media: [{ mimeType: "image/png", width: 100, height: 100 }] })).toEqual([]);
   });
 
+  it("varias imagenes: Instagram revisa cada una y dice cual falla; Facebook solo las cuenta", () => {
+    const png = { ...jpg, mimeType: "image/png" };
+    expect(validatePostForReview({ ...base, targets: [fb, ig], media: [jpg, jpg, jpg] })).toEqual([]);
+    expect(validatePostForReview({ ...base, targets: [ig], media: [jpg, png] })).toEqual([expect.stringMatching(/^Imagen 2: .*solo acepta imágenes JPG/)]);
+    expect(validatePostForReview({ ...base, targets: [ig], media: [{ ...jpg, width: 100, height: 100 }, jpg, { ...jpg, width: 1000, height: 3000 }] })).toEqual([
+      expect.stringMatching(/^Imagen 1: .*muy pequeña/),
+      expect.stringMatching(/^Imagen 3: .*4:5/),
+    ]);
+    // Con una sola imagen el mensaje no lleva «Imagen 1:».
+    expect(validatePostForReview({ ...base, targets: [ig], media: [png] })[0]).toMatch(/^Instagram solo acepta/);
+    expect(validatePostForReview({ ...base, targets: [fb], media: [png, png] })).toEqual([]);
+  });
+
+  it("mas de 10 imagenes no pasa, en cualquier destino", () => {
+    const eleven = Array.from({ length: 11 }, () => jpg);
+    expect(validatePostForReview({ ...base, targets: [fb], media: eleven })).toEqual([expect.stringMatching(/hasta 10 imágenes y esta tiene 11\. Quita una\./)]);
+    expect(validatePostForReview({ ...base, targets: [fb], media: Array.from({ length: 10 }, () => jpg) })).toEqual([]);
+    expect(validatePostForReview({ ...base, targets: [fb], media: Array.from({ length: 13 }, () => jpg) })).toEqual([expect.stringMatching(/Quita 3\./)]);
+  });
+
   it("avisa de destinos desconectados, vencidos o de otra marca", () => {
     const errors = validatePostForReview({
       ...base,

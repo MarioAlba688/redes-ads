@@ -1,4 +1,4 @@
-import { instagramImageError } from "@/lib/media-format";
+import { instagramImageError, MAX_IMAGES_PER_POST } from "@/lib/media-format";
 import { missingPublishScope, missingScopeMessage } from "@/lib/meta/scopes";
 import { lengthError } from "@/lib/post-validation";
 
@@ -35,13 +35,15 @@ export function validatePostForReview(p: ReviewCheckInput): string[] {
   const tooLong = lengthError(p.text, kinds);
   if (tooLong) errors.push(tooLong);
 
+  if (p.media.length > MAX_IMAGES_PER_POST) errors.push(`Una publicación admite hasta ${MAX_IMAGES_PER_POST} imágenes y esta tiene ${p.media.length}. Quita ${p.media.length - MAX_IMAGES_PER_POST === 1 ? "una" : p.media.length - MAX_IMAGES_PER_POST}.`);
+
   if (kinds.includes("INSTAGRAM_PROFILE")) {
-    const image = p.media[0];
-    if (!image) errors.push("Instagram necesita una imagen: sube una en el borrador o quita Instagram de los destinos.");
-    else {
+    if (p.media.length === 0) errors.push("Instagram necesita una imagen: sube una en el borrador o quita Instagram de los destinos.");
+    // Con varias imagenes (carrusel) se revisa cada una y el mensaje dice cual.
+    p.media.slice(0, MAX_IMAGES_PER_POST).forEach((image, i) => {
       const problem = instagramImageError({ mimeType: image.mimeType, width: image.width ?? 0, height: image.height ?? 0 });
-      if (problem) errors.push(problem);
-    }
+      if (problem) errors.push(p.media.length > 1 ? `Imagen ${i + 1}: ${problem}` : problem);
+    });
   }
   return errors;
 }

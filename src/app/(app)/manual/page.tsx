@@ -8,6 +8,8 @@ import { imageExists } from "@/lib/media";
 import { META_SCOPES } from "@/lib/meta/config";
 import { buildMetaDiagnostics, isLocalHost, type CheckStatus } from "@/lib/meta/diagnostics";
 import { can } from "@/lib/permissions";
+import { TimingAdvice } from "../anuncios/timing-advice";
+import { todayInTimezone } from "@/lib/meta/dates";
 import { Callout, Code, Ext, Problem, Section, Step, Steps, UI } from "./parts";
 
 export const metadata: Metadata = { title: "Manual" };
@@ -26,6 +28,7 @@ const TOC = [
   { id: "publicar-instagram", label: "6. Publicar en Instagram" },
   { id: "estadisticas", label: "7. Estadísticas de las publicaciones" },
   { id: "anuncios", label: "8. Anuncios" },
+  { id: "recomendaciones", label: "9. Cuándo conviene pagar publicidad" },
   { id: "permisos", label: "Si falta el permiso de publicar" },
   { id: "problemas", label: "Mensajes frecuentes" },
 ];
@@ -293,7 +296,12 @@ export default async function ManualPage() {
         <Section id="publicar-instagram" title="6. Publicar en Instagram: imagen y dirección pública">
           <h3 className="text-sm font-semibold">La imagen</h3>
           <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed">
-            <li>Instagram exige una imagen (una por publicación).</li>
+            <li>
+              Instagram exige al menos una imagen. Puedes subir <UI>hasta 10 a la vez</UI> (se eligen varias en el mismo cuadro): en Facebook salen juntas en una sola publicación y en Instagram como <UI>carrusel</UI>. La primera es la portada y se puede cambiar el orden con las flechas.
+            </li>
+            <li>
+              En un carrusel cada imagen debe cumplir lo de abajo, y Instagram puede recortarlas todas con la proporción de la <em>primera</em>: elige primero la que mejor represente a las demás. Los anuncios usan solo la primera imagen.
+            </li>
             <li>
               Formato <UI>JPG</UI>: si subes un PNG, la app lo convierte sola al subirlo.
             </li>
@@ -495,6 +503,10 @@ export default async function ManualPage() {
           </Callout>
         </Section>
 
+        <Section id="recomendaciones" title="9. Cuándo conviene pagar publicidad" intro="Recomendaciones de días y fechas para activar tus anuncios. Es una guía general, no datos de tu cuenta: cuando tengas resultados propios, mandan ellos.">
+          <TimingAdvice today={todayInTimezone(env().APP_TIMEZONE)} />
+        </Section>
+
         <Section id="permisos" title="Si la app dice que falta el permiso de publicar" intro="Pasa cuando la conexión con Meta se hizo sin pages_manage_posts (Facebook) o instagram_content_publish (Instagram). La app no deja aprobar ni publicar hasta arreglarlo.">
           <Steps>
             <Step>
@@ -560,7 +572,7 @@ export default async function ManualPage() {
             </Problem>
             <Problem message="«Instagram solo acepta imágenes JPG» / «Instagram solo acepta fotos entre formato vertical 4:5 y horizontal 1,91:1»">
               <p>
-                Si la imagen quedó guardada como PNG, quítala con <UI>Quitar imagen</UI> y vuelve a subirla (se convierte sola). Si la proporción no cabe en el rango, recórtala antes de subirla.
+                Si la imagen quedó guardada como PNG, quítala con <UI>Quitar</UI> y vuelve a subirla (se convierte sola). Si la proporción no cabe en el rango, recórtala antes de subirla.
               </p>
             </Problem>
             <Problem message="«La conexión con Meta venció o fue revocada»">

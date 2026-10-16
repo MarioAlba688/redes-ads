@@ -3,14 +3,12 @@ import { audit } from "@/lib/audit";
 import { authorize } from "@/lib/auth/dal";
 import { db } from "@/lib/db";
 import { saveImage, deleteImage, mediaPath } from "@/lib/media";
-import { MAX_IMAGE_BYTES, readImageInfo } from "@/lib/media-format";
+import { MAX_IMAGE_BYTES, MAX_IMAGES_PER_POST, readImageInfo } from "@/lib/media-format";
 import { isSameOrigin } from "@/lib/same-origin";
-
-const MAX_IMAGES_PER_POST = 1; // por ahora una imagen por publicacion
 
 const fail = (status: number, error: string) => NextResponse.json({ error }, { status });
 
-/** Sube la imagen de un borrador. Solo quien puede crear contenido, y solo mientras es borrador. */
+/** Sube una imagen de un borrador (la deja al final del orden). Solo quien puede crear contenido, y solo mientras es borrador. */
 export async function POST(request: NextRequest, ctx: RouteContext<"/api/posts/[id]/media">) {
   if (!isSameOrigin(request)) return fail(403, "Origen no permitido.");
   const auth = await authorize("content.create");
@@ -19,9 +17,9 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/posts/[
   const { id } = await ctx.params;
   const post = await db.post.findUnique({ where: { id }, select: { status: true, _count: { select: { media: true } } } });
   if (!post) return fail(404, "Esa publicación ya no existe.");
-  if (post.status !== "DRAFT") return fail(409, "Solo se puede cambiar la imagen de un borrador.");
+  if (post.status !== "DRAFT") return fail(409, "Solo se pueden cambiar las imágenes de un borrador.");
   if (post._count.media >= MAX_IMAGES_PER_POST) {
-    return fail(409, "Cada publicación admite una imagen por ahora. Quita la actual para subir otra.");
+    return fail(409, `Una publicación admite hasta ${MAX_IMAGES_PER_POST} imágenes. Quita alguna para subir otra.`);
   }
 
   // Se mira el tamano declarado antes de leer el archivo entero a memoria.
@@ -42,6 +40,8 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/posts/[
 
   const storageKey = await saveImage(bytes, info.info);
   try {
+    // Va al final: una posicion mas que la ultima (las posiciones pueden tener huecos si se quitaron imagenes).
+    const last = await db.postMedia.aggregate({ where: { postId: id }, _max: { position: true } });
     const media = await db.postMedia.create({
       data: {
         postId: id,
@@ -51,6 +51,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/posts/[
         height: info.info.height,
         storageKey,
         originalName: file.name.replace(/[\u0000-\u001f]/g, "").slice(0, 255) || null,
+        position: (last._max.position ?? -1) + 1,
       },
       select: { id: true },
     });

@@ -7,6 +7,8 @@ export type ImageInfo = { mimeType: ImageKind; extension: "jpg" | "png"; width: 
 
 /** Tamano maximo de una imagen (limite de Instagram: 8 MB). */
 export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+/** Imagenes por publicacion: lo que admite un carrusel de Instagram (Facebook admite al menos tantas). */
+export const MAX_IMAGES_PER_POST = 10;
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 

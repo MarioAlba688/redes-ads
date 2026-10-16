@@ -128,6 +128,7 @@ export function startFakeMeta(port, expectedRedirectUri) {
   let lastDialog = null;
   let published = []; // lo que "salio" en Facebook / Instagram
   let containers = new Map(); // contenedores de Instagram creados
+  let unpublishedPhotos = new Map(); // fotos subidas con published=false (para adjuntarlas a una publicacion)
   let seq = 0;
 
   const json = (res, status, body) => {
@@ -157,6 +158,7 @@ export function startFakeMeta(port, expectedRedirectUri) {
       lastDialog = null;
       published = [];
       containers = new Map();
+      unpublishedPhotos = new Map();
       return json(res, 200, {});
     }
     if (url.pathname === "/__requests") return json(res, 200, { requests, lastDialog });
@@ -267,6 +269,23 @@ export function startFakeMeta(port, expectedRedirectUri) {
       }
 
       if (edge === "feed") {
+        // Varias fotos: attached_media[i] = {"media_fbid": "<foto subida con published=false a ESTA pagina>"}.
+        const attachedKeys = [...body.fields.keys()].filter((k) => /^attached_media\[\d+\]$/.test(k)).sort((a, b) => Number(a.match(/\d+/)[0]) - Number(b.match(/\d+/)[0]));
+        if (attachedKeys.length) {
+          const photos = attachedKeys.map((k) => {
+            try {
+              return unpublishedPhotos.get(JSON.parse(body.fields.get(k)).media_fbid);
+            } catch {
+              return undefined;
+            }
+          });
+          if (photos.some((ph) => !ph || ph.account !== accountId)) {
+            return graphError(res, 400, 100, "(#100) Invalid parameter: attached_media has a photo that was not uploaded unpublished to this page");
+          }
+          const id = `${accountId}_${++seq}`;
+          published.push({ kind: "feed", account: accountId, message: arg("message"), link: arg("link"), id, attached: photos.map((ph) => ({ id: ph.id, sha256: ph.sha256, bytes: ph.bytes, name: ph.name })) });
+          return json(res, 200, { id });
+        }
         const id = `${accountId}_${++seq}`;
         published.push({ kind: "feed", account: accountId, message: arg("message"), link: arg("link"), id });
         return json(res, 200, { id });
@@ -274,9 +293,29 @@ export function startFakeMeta(port, expectedRedirectUri) {
       if (edge === "photos") {
         const file = body.files.get("source");
         if (!file) return graphError(res, 400, 100, "(#100) The parameter source is required");
+        if (arg("published") === "false") {
+          // Foto suelta que no sale en la pagina: solo sirve para adjuntarla despues a una publicacion.
+          const id = `UPH-${++seq}`;
+          const rec = { id, account: accountId, sha256: sha256(file.bytes), bytes: file.bytes.length, name: file.name };
+          unpublishedPhotos.set(id, rec);
+          published.push({ kind: "photo-unpublished", ...rec, caption: arg("caption") });
+          return json(res, 200, { id });
+        }
         const postId = `${accountId}_${++seq}`;
         published.push({ kind: "photo", account: accountId, caption: arg("caption"), bytes: file.bytes.length, sha256: sha256(file.bytes), mime: file.type, filename: file.name, id: postId });
         return json(res, 200, { id: `photo-${seq}`, post_id: postId });
+      }
+      if (edge === "media" && arg("media_type") === "CAROUSEL") {
+        // Contenedor padre del carrusel: reune de 2 a 10 contenedores hijos (is_carousel_item) de esta misma cuenta.
+        const ids = (arg("children") ?? "").split(",").filter(Boolean);
+        const kids = ids.map((cid) => containers.get(cid));
+        if (ids.length < 2 || ids.length > 10 || kids.some((k) => !k || !k.child || k.account !== accountId)) {
+          return graphError(res, 400, 100, "(#100) Invalid parameter: children must be 2 to 10 carousel item containers of this account");
+        }
+        const id = `CONT-${++seq}`;
+        containers.set(id, { account: accountId, polls: 0, children: ids });
+        published.push({ kind: "ig-carousel", account: accountId, caption: arg("caption"), id, children: ids.map((cid) => published.find((p) => p.id === cid)) });
+        return json(res, 200, { id });
       }
       if (edge === "media") {
         // Instagram descarga la imagen de la URL publica que le dimos, sin sesion: lo comprobamos igual.
@@ -293,15 +332,18 @@ export function startFakeMeta(port, expectedRedirectUri) {
           return graphError(res, 400, 9004, "The media could not be fetched from this uri", { error_subcode: 2207052 });
         }
         const id = `CONT-${++seq}`;
-        containers.set(id, { account: accountId, polls: 0 });
-        published.push({ kind: "ig-container", account: accountId, caption: arg("caption"), imageUrl, fetched, id });
+        const child = arg("is_carousel_item") === "true";
+        containers.set(id, { account: accountId, polls: 0, child });
+        published.push({ kind: child ? "ig-child" : "ig-container", account: accountId, caption: arg("caption"), imageUrl, fetched, id });
         return json(res, 200, { id });
       }
       // media_publish
       const container = containers.get(arg("creation_id"));
       if (!container || container.account !== accountId) return graphError(res, 400, 100, "(#100) Invalid creation_id");
+      // Un hijo de carrusel no se publica solo: se publica el padre.
+      if (container.child) return graphError(res, 400, 9007, "(#9007) The media is not ready to be published. Carousel items are published through their parent container.");
       const id = `IGM-${++seq}`;
-      published.push({ kind: "ig-publish", account: accountId, creation: arg("creation_id"), id });
+      published.push({ kind: "ig-publish", account: accountId, creation: arg("creation_id"), id, carousel: !!container.children });
       return json(res, 200, { id });
     }
 
@@ -419,6 +461,7 @@ export function startFakeMeta(port, expectedRedirectUri) {
           lastDialog = null;
           published = [];
           containers = new Map();
+          unpublishedPhotos = new Map();
           ads.reset();
         },
         ads,

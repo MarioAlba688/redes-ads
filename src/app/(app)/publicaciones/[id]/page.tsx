@@ -30,7 +30,8 @@ const EVENT_LABELS: Record<string, string> = {
   "post.created": "creó el borrador",
   "post.updated": "editó el borrador",
   "post.media_added": "añadió una imagen",
-  "post.media_removed": "quitó la imagen",
+  "post.media_removed": "quitó una imagen",
+  "post.media_moved": "cambió el orden de las imágenes",
   "post.submitted": "la envió a revisión",
   "post.returned": "la devolvió con una nota",
   "post.approved": "la aprobó",
@@ -192,15 +193,22 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
       {header}
       <Card className="space-y-5 p-5">
         <p className="whitespace-pre-wrap text-sm">{post.text}</p>
-        {post.media.map((m) =>
-          missingMedia.has(m.id) ? (
-            <RestoreImage key={m.id} postId={post.id} mediaId={m.id} width={m.width} height={m.height} canRestore={canRestore} />
-          ) : (
-            // Imagen dinamica servida por nuestra ruta /media: next/image no aporta nada aqui.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img key={m.id} src={mediaPath(m.storageKey)} alt="Imagen de la publicación" className="max-h-72 max-w-full rounded-lg border border-border" />
-          ),
+        {post.media.length > 0 && (
+          <div className="flex flex-wrap items-start gap-3">
+            {post.media.map((m, i) =>
+              missingMedia.has(m.id) ? (
+                <div key={m.id} className="w-full">
+                  <RestoreImage postId={post.id} mediaId={m.id} width={m.width} height={m.height} canRestore={canRestore} />
+                </div>
+              ) : (
+                // Imagen dinamica servida por nuestra ruta /media: next/image no aporta nada aqui.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img key={m.id} src={mediaPath(m.storageKey)} alt={post.media.length > 1 ? `Imagen ${i + 1} de ${post.media.length} de la publicación` : "Imagen de la publicación"} className="max-h-72 max-w-full rounded-lg border border-border" />
+              ),
+            )}
+          </div>
         )}
+        {post.media.length > 1 && <p className="-mt-3 text-xs text-muted">{post.media.length} imágenes: en Facebook salen juntas y en Instagram como carrusel.</p>}
         {post.linkUrl && (
           <p className="text-sm">
             <span className="text-muted">Enlace: </span>

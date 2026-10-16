@@ -4,7 +4,9 @@ import { Card, PageHeader } from "@/components/ui";
 import { requireUser } from "@/lib/auth/dal";
 import { db } from "@/lib/db";
 import { dateTimeFormat } from "@/lib/display-time";
+import { env } from "@/lib/env";
 import { imageExists } from "@/lib/media";
+import { todayInTimezone } from "@/lib/meta/dates";
 import { missingAdsWriteScope } from "@/lib/meta/scopes";
 import { budgetDecimals } from "@/lib/promotions/currency";
 import { failureHints } from "@/lib/promotions/hints";
@@ -12,6 +14,7 @@ import type { CreativeInput, PromotionKindName, Targeting } from "@/lib/promotio
 import { monthSpendByAccount } from "@/lib/promotions/spend";
 import { POST_STATUS_LABELS, type PostStatusName } from "@/lib/posts";
 import { PromotionForm, type AccountOption, type BoostOption, type PageOption, type PostOption } from "../promotion-form";
+import { TimingAdvice } from "../timing-advice";
 
 export const metadata: Metadata = { title: "Crear anuncio" };
 
@@ -69,7 +72,7 @@ export default async function NewPromotionPage({ searchParams }: PageProps<"/anu
           where: { status: { not: "CANCELLED" } },
           orderBy: { createdAt: "desc" },
           take: 60,
-          select: { id: true, text: true, brandId: true, status: true, media: { take: 1, orderBy: { position: "asc" }, select: { storageKey: true } } },
+          select: { id: true, text: true, brandId: true, status: true, media: { take: 1, orderBy: { position: "asc" }, select: { storageKey: true } }, _count: { select: { media: true } } },
         })
       : Promise.resolve([]),
   ]);
@@ -87,7 +90,7 @@ export default async function NewPromotionPage({ searchParams }: PageProps<"/anu
     kind === "AD" && initial && !posts.some((p) => p.id === initial)
       ? await db.post.findFirst({
           where: { id: initial, status: { not: "CANCELLED" } },
-          select: { id: true, text: true, brandId: true, status: true, media: { take: 1, orderBy: { position: "asc" }, select: { storageKey: true } } },
+          select: { id: true, text: true, brandId: true, status: true, media: { take: 1, orderBy: { position: "asc" }, select: { storageKey: true } }, _count: { select: { media: true } } },
         })
       : null;
   const postRows = extraPost ? [...posts, extraPost] : posts;
@@ -119,7 +122,7 @@ export default async function NewPromotionPage({ searchParams }: PageProps<"/anu
       text: p.text,
       hasImage: registered && !imageMissing,
       imageMissing,
-      label: `${excerpt(p.text, 70)} · ${POST_STATUS_LABELS[p.status as PostStatusName] ?? p.status}${!registered ? " · sin imagen" : imageMissing ? " · imagen perdida" : ""}`,
+      label: `${excerpt(p.text, 70)} · ${POST_STATUS_LABELS[p.status as PostStatusName] ?? p.status}${!registered ? " · sin imagen" : imageMissing ? " · imagen perdida" : p._count.media > 1 ? ` · ${p._count.media} imágenes (se usa la primera)` : ""}`,
     };
   });
   const pages: PageOption[] = pageAccounts.map((p) => ({ id: p.id, name: p.name, brandId: p.brandId as string }));
@@ -177,6 +180,13 @@ export default async function NewPromotionPage({ searchParams }: PageProps<"/anu
       ) : (
         <p className="mb-4 max-w-2xl text-sm text-muted">Arma un anuncio con el texto y la imagen de una publicación, con enlace y botón. No se publica en tu página: solo existe como anuncio.</p>
       )}
+      <details className="mb-4 max-w-2xl rounded-lg border border-border bg-surface px-4 py-3">
+        <summary className="cursor-pointer text-sm font-medium">¿Cuándo conviene activarlo? Recomendaciones de días y fechas</summary>
+        <p className="mt-2 text-sm text-muted">Es una guía general, no datos de tu cuenta: cuando tengas resultados propios, mandan ellos.</p>
+        <div className="mt-3">
+          <TimingAdvice today={todayInTimezone(env().APP_TIMEZONE)} />
+        </div>
+      </details>
       <Card className="border-0 bg-transparent">
         <PromotionForm key={`${kind}-${copyId ?? ""}`} kind={kind} accounts={accounts} boosts={boosts} posts={postOptions} pages={pages} initialSourceId={initial} initial={copyForm} copyNotice={copyNotice} />
       </Card>

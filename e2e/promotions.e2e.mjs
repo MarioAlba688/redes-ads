@@ -492,6 +492,9 @@ try {
 
   fake.setScenario({ adsMinBudget: 30000, adsFail: {} });
   await openBoost(edgar, FB, { name: "Presupuesto bajo", budget: "20000" });
+  check("Crear anuncio trae un recuadro plegado con las recomendaciones de días y fechas", (await edgar.locator("details", { hasText: "Recomendaciones de días y fechas" }).count()) === 1 && (await edgar.locator("details[open]").count()) === 0);
+  await edgar.locator("summary", { hasText: "Recomendaciones de días y fechas" }).click();
+  check("al abrirlo explica los días según el cliente, las próximas fechas y cómo programarlo con la activación", (await edgar.getByText("Según a quién le vendes").isVisible()) && (await edgar.getByText(/Quincena/).first().isVisible()) && (await edgar.getByText("Cómo programarlo aquí").isVisible()));
   await submit(edgar);
   check("presupuesto por debajo del mínimo de Meta: lo explica", /mínimo/.test(await formError(edgar)));
   calm();
@@ -839,6 +842,7 @@ try {
   await admin.goto(`${APP}/manual`);
   check("el Manual explica los anuncios y está en su índice", (await admin.locator("#anuncios").getByRole("heading", { name: "8. Anuncios: crear, activar y controlar el gasto" }).count()) === 1 && (await admin.locator('nav[aria-label="En esta guía"] a[href="#anuncios"]').count()) === 1);
   const anunciosText = await admin.locator("#anuncios").innerText();
+  check("el Manual trae las recomendaciones de cuándo pagar publicidad y están en su índice", (await admin.locator("#recomendaciones").getByRole("heading", { name: "9. Cuándo conviene pagar publicidad" }).count()) === 1 && (await admin.locator("#recomendaciones").getByText("Según a quién le vendes").count()) === 1 && (await admin.locator("#recomendaciones").getByText(/Quincena/).count()) >= 1 && (await admin.locator('a[href="#recomendaciones"]').count()) >= 1);
   check("el Manual explica cómo configurar el medio de pago y el tope mensual", /Cómo configurar el medio de pago en Meta/.test(anunciosText) && /Facturación y pagos/.test(anunciosText) && /límite de gasto de la cuenta/.test(anunciosText) && /tope mensual/.test(anunciosText));
   check("«Tu estado ahora» confirma que se pueden crear anuncios cuando hay permiso y tope", (await admin.getByText("Se pueden crear anuncios").count()) === 1);
   check("la línea recomendada de META_SCOPES incluye ads_management", (await admin.getByText(/META_SCOPES="ads_read,ads_management,/).count()) >= 1);

@@ -1,5 +1,6 @@
 import "server-only";
 import { env } from "@/lib/env";
+import { MAX_IMAGES_PER_POST } from "@/lib/media-format";
 import { MetaApiError } from "@/lib/meta/errors";
 import { graphGet, graphPost } from "@/lib/meta/graph";
 
@@ -17,7 +18,8 @@ export class PublishError extends Error {
 }
 
 export type PublishImage = { bytes: Uint8Array; mimeType: string; filename: string; publicUrl: string };
-export type PublishInput = { text: string; linkUrl: string | null; image: PublishImage | null };
+/** `images` va en el orden en que se ve la publicacion (la primera es la portada). Vacio = solo texto. */
+export type PublishInput = { text: string; linkUrl: string | null; images: PublishImage[] };
 export type PublishResult = { externalId: string; url: string };
 type Account = { externalId: string; token: string };
 
@@ -26,20 +28,42 @@ type Account = { externalId: string; token: string };
 // ---------------------------------------------------------------------------
 
 /**
- * Publica en una pagina de Facebook: con imagen se sube la foto con el texto como pie; sin imagen es una
- * publicacion de texto (con el enlace, si hay). Necesita el permiso pages_manage_posts y el token de la pagina.
+ * Publica en una pagina de Facebook: con una imagen se sube la foto con el texto como pie; con varias se suben
+ * todas SIN publicar y luego se crea una sola publicacion que las adjunta (asi salen juntas, en ese orden); sin
+ * imagen es una publicacion de texto (con el enlace, si hay). Necesita pages_manage_posts y el token de la pagina.
  */
 export async function publishToFacebookPage(page: Account, input: PublishInput): Promise<PublishResult> {
-  if (input.image) {
-    // Una foto no lleva campo de enlace: si hay uno, va al final del pie.
+  if (input.images.length > MAX_IMAGES_PER_POST) {
+    throw new PublishError(`Una publicación admite hasta ${MAX_IMAGES_PER_POST} imágenes.`, false);
+  }
+  if (input.images.length > 0) {
+    // Ni una foto ni un grupo de fotos llevan campo de enlace: si hay uno, va al final del texto.
     const caption = input.linkUrl ? `${input.text}\n\n${input.linkUrl}` : input.text;
-    const res = await graphPost<{ id: string; post_id?: string }>(`${page.externalId}/photos`, {
-      token: page.token,
-      params: { caption, published: true },
-      file: { field: "source", bytes: input.image.bytes, filename: input.image.filename, mimeType: input.image.mimeType },
+    const upload = (image: PublishImage, published: boolean, withCaption: boolean) =>
+      graphPost<{ id: string; post_id?: string }>(`${page.externalId}/photos`, {
+        token: page.token,
+        params: { ...(withCaption ? { caption } : {}), published },
+        file: { field: "source", bytes: image.bytes, filename: image.filename, mimeType: image.mimeType },
+      });
+
+    if (input.images.length === 1) {
+      const res = await upload(input.images[0], true, true);
+      const id = res.post_id ?? res.id;
+      return { externalId: id, url: `https://www.facebook.com/${id}` };
+    }
+
+    // Una a una y en orden: el orden de las fotos adjuntas es el de la publicacion.
+    const photoIds: string[] = [];
+    for (const image of input.images) photoIds.push((await upload(image, false, false)).id);
+    const attached: Record<string, string> = {};
+    photoIds.forEach((id, i) => {
+      attached[`attached_media[${i}]`] = JSON.stringify({ media_fbid: id });
     });
-    const id = res.post_id ?? res.id;
-    return { externalId: id, url: `https://www.facebook.com/${id}` };
+    const res = await graphPost<{ id: string }>(`${page.externalId}/feed`, {
+      token: page.token,
+      params: { message: caption, ...attached },
+    });
+    return { externalId: res.id, url: `https://www.facebook.com/${res.id}` };
   }
   const res = await graphPost<{ id: string }>(`${page.externalId}/feed`, {
     token: page.token,
@@ -54,41 +78,68 @@ export async function publishToFacebookPage(page: Account, input: PublishInput):
 
 const POLL_ATTEMPTS = 15;
 
+/** Espera a que Instagram termine de procesar un contenedor. `what` es lo que se nombra en los mensajes. */
+async function waitForContainer(ig: Account, id: string, pollMs: number, what: string): Promise<void> {
+  for (let i = 0; i < POLL_ATTEMPTS; i++) {
+    const status = await graphGet<{ status_code?: string; status?: string }>(id, {
+      token: ig.token,
+      params: { fields: "status_code,status" },
+    });
+    if (status.status_code === "FINISHED" || status.status_code === undefined) return;
+    if (status.status_code === "ERROR" || status.status_code === "EXPIRED") {
+      throw new PublishError(`Instagram rechazó ${what}${status.status ? `: ${status.status.slice(0, 160)}` : ""}.`, false);
+    }
+    if (pollMs > 0) await new Promise((r) => setTimeout(r, pollMs));
+  }
+  throw new PublishError(`Instagram tarda demasiado en procesar ${what}. Se reintentará.`, true);
+}
+
 /**
  * Instagram publica en dos pasos: crea un "contenedor" con la imagen (Meta la descarga de nuestra URL publica),
- * espera a que lo procese y lo publica. Necesita instagram_content_publish y una cuenta profesional.
+ * espera a que lo procese y lo publica. Con varias imagenes es un carrusel: un contenedor por imagen (hijos, que
+ * no se publican solos), uno padre que los reune en orden, y se publica el padre. Necesita instagram_content_publish
+ * y una cuenta profesional.
  */
 export async function publishToInstagram(
   ig: Account,
   input: PublishInput,
   opts: { pollMs?: number } = {},
 ): Promise<PublishResult> {
-  if (!input.image) throw new PublishError("Instagram necesita una imagen y esta publicación no tiene.", false);
+  if (input.images.length === 0) throw new PublishError("Instagram necesita una imagen y esta publicación no tiene.", false);
+  if (input.images.length > MAX_IMAGES_PER_POST) {
+    throw new PublishError(`Un carrusel de Instagram admite hasta ${MAX_IMAGES_PER_POST} imágenes.`, false);
+  }
   const pollMs = opts.pollMs ?? 2000;
 
-  const container = await graphPost<{ id: string }>(`${ig.externalId}/media`, {
-    token: ig.token,
-    params: { image_url: input.image.publicUrl, caption: input.text },
-  });
-
-  let finished = false;
-  for (let i = 0; i < POLL_ATTEMPTS && !finished; i++) {
-    const status = await graphGet<{ status_code?: string; status?: string }>(container.id, {
+  let creationId: string;
+  if (input.images.length === 1) {
+    const container = await graphPost<{ id: string }>(`${ig.externalId}/media`, {
       token: ig.token,
-      params: { fields: "status_code,status" },
+      params: { image_url: input.images[0].publicUrl, caption: input.text },
     });
-    if (status.status_code === "FINISHED" || status.status_code === undefined) finished = true;
-    else if (status.status_code === "ERROR" || status.status_code === "EXPIRED") {
-      throw new PublishError(`Instagram rechazó la imagen${status.status ? `: ${status.status.slice(0, 160)}` : ""}.`, false);
-    } else if (pollMs > 0) {
-      await new Promise((r) => setTimeout(r, pollMs));
+    await waitForContainer(ig, container.id, pollMs, "la imagen");
+    creationId = container.id;
+  } else {
+    const children: string[] = [];
+    for (const image of input.images) {
+      const child = await graphPost<{ id: string }>(`${ig.externalId}/media`, {
+        token: ig.token,
+        params: { image_url: image.publicUrl, is_carousel_item: true },
+      });
+      children.push(child.id);
     }
+    for (const id of children) await waitForContainer(ig, id, pollMs, "una de las imágenes");
+    const parent = await graphPost<{ id: string }>(`${ig.externalId}/media`, {
+      token: ig.token,
+      params: { media_type: "CAROUSEL", children: children.join(","), caption: input.text },
+    });
+    await waitForContainer(ig, parent.id, pollMs, "el carrusel");
+    creationId = parent.id;
   }
-  if (!finished) throw new PublishError("Instagram tarda demasiado en procesar la imagen. Se reintentará.", true);
 
   const published = await graphPost<{ id: string }>(`${ig.externalId}/media_publish`, {
     token: ig.token,
-    params: { creation_id: container.id },
+    params: { creation_id: creationId },
   });
 
   let url = "https://www.instagram.com/";

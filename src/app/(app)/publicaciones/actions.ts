@@ -197,13 +197,47 @@ export async function removeMedia(_prev: FormState, formData: FormData): Promise
     select: { storageKey: true, postId: true, post: { select: { status: true } } },
   });
   if (!media) return { error: "Esa imagen ya no existe." };
-  if (media.post.status !== "DRAFT") return { error: "Solo se puede cambiar la imagen de un borrador." };
+  if (media.post.status !== "DRAFT") return { error: "Solo se pueden cambiar las imágenes de un borrador." };
 
   await db.postMedia.delete({ where: { id: id.data } });
   await deleteImage(media.storageKey);
   await audit("post.media_removed", { userId: auth.user.id, target: media.postId });
   revalidatePath(`/publicaciones/${media.postId}`);
   return { success: "Imagen quitada." };
+}
+
+/** Cambia el orden de las imagenes de un borrador: mueve una antes o despues de su vecina. La primera es la portada. */
+export async function moveMedia(_prev: FormState, formData: FormData): Promise<FormState> {
+  const auth = await authorize("content.create");
+  if (!auth.ok) return { error: auth.error };
+
+  const parsed = z.object({ mediaId: z.string().min(1), direction: z.enum(["before", "after"]) }).safeParse({
+    mediaId: formData.get("mediaId"),
+    direction: formData.get("direction"),
+  });
+  if (!parsed.success) return { error: "Datos no válidos." };
+
+  const media = await db.postMedia.findUnique({ where: { id: parsed.data.mediaId }, select: { postId: true, post: { select: { status: true } } } });
+  if (!media) return { error: "Esa imagen ya no existe." };
+  if (media.post.status !== "DRAFT") return { error: "Solo se pueden cambiar las imágenes de un borrador." };
+
+  const all = await db.postMedia.findMany({
+    where: { postId: media.postId },
+    orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+    select: { id: true, position: true },
+  });
+  const from = all.findIndex((m) => m.id === parsed.data.mediaId);
+  const to = parsed.data.direction === "before" ? from - 1 : from + 1;
+  if (from < 0 || to < 0 || to >= all.length) return undefined; // ya esta en el borde: nada que mover
+
+  const order = all.map((m) => m.id);
+  [order[from], order[to]] = [order[to], order[from]];
+  // Se reasignan posiciones 0..n-1 y solo se escriben las que cambian (normalmente dos).
+  const changed = order.flatMap((id, position) => (all.find((m) => m.id === id)?.position === position ? [] : [{ id, position }]));
+  await db.$transaction(changed.map((c) => db.postMedia.update({ where: { id: c.id }, data: { position: c.position } })));
+  await audit("post.media_moved", { userId: auth.user.id, target: media.postId });
+  revalidatePath(`/publicaciones/${media.postId}`);
+  return { success: "Orden guardado." };
 }
 
 export async function deleteDraft(_prev: FormState, formData: FormData): Promise<FormState> {

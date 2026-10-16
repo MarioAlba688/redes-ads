@@ -45,7 +45,7 @@ function stubFetchWithBodies(handler: (url: URL, n: number) => { body: unknown; 
 describe("publicar en una pagina de Facebook", () => {
   it("un texto va a /feed con el mensaje y el enlace, y el token en el cuerpo (no en la URL)", async () => {
     const calls = stubFetchWithBodies(() => ({ body: { id: "P1_555" } }));
-    const res = await publishToFacebookPage(page, { text: "Hola mundo", linkUrl: "https://reservi.example", image: null });
+    const res = await publishToFacebookPage(page, { text: "Hola mundo", linkUrl: "https://reservi.example", images: [] });
 
     expect(res).toEqual({ externalId: "P1_555", url: "https://www.facebook.com/P1_555" });
     const c = calls[0];
@@ -58,13 +58,13 @@ describe("publicar en una pagina de Facebook", () => {
 
   it("sin enlace no manda el campo link", async () => {
     const calls = stubFetchWithBodies(() => ({ body: { id: "P1_1" } }));
-    await publishToFacebookPage(page, { text: "Solo texto", linkUrl: null, image: null });
+    await publishToFacebookPage(page, { text: "Solo texto", linkUrl: null, images: [] });
     expect(calls[0].form).not.toHaveProperty("link");
   });
 
   it("con imagen sube la foto a /photos como archivo y el texto va de pie (con el enlace al final)", async () => {
     const calls = stubFetchWithBodies(() => ({ body: { id: "999", post_id: "P1_999" } }));
-    const res = await publishToFacebookPage(page, { text: "Mira esto", linkUrl: "https://reservi.example", image });
+    const res = await publishToFacebookPage(page, { text: "Mira esto", linkUrl: "https://reservi.example", images: [image] });
 
     expect(res.externalId).toBe("P1_999");
     const c = calls[0];
@@ -77,9 +77,116 @@ describe("publicar en una pagina de Facebook", () => {
 
   it("si Meta rechaza, el error es un MetaApiError con su codigo", async () => {
     stubFetchWithBodies(() => ({ status: 403, body: { error: { message: "(#200) Requires pages_manage_posts", code: 200 } } }));
-    const err = await publishToFacebookPage(page, { text: "x", linkUrl: null, image: null }).catch((e) => e);
+    const err = await publishToFacebookPage(page, { text: "x", linkUrl: null, images: [] }).catch((e) => e);
     expect(err).toBeInstanceOf(MetaApiError);
     expect(err.code).toBe(200);
+  });
+});
+
+describe("publicar en Facebook con varias imagenes", () => {
+  const img = (name: string) => ({ ...image, filename: `${name}.jpg` });
+
+  it("sube cada foto SIN publicar y en orden, y crea una sola publicacion que las adjunta (con el enlace al final del texto)", async () => {
+    let n = 0;
+    const calls = stubFetchWithBodies((url) => {
+      if (url.pathname.endsWith("/P1/photos")) return { body: { id: `PH-${++n}` } };
+      if (url.pathname.endsWith("/P1/feed")) return { body: { id: "P1_700" } };
+      return { status: 404, body: { error: { message: "no", code: 803 } } };
+    });
+    const res = await publishToFacebookPage(page, { text: "Álbum nuevo", linkUrl: "https://reservi.example", images: [img("a"), img("b"), img("c")] });
+
+    expect(res).toEqual({ externalId: "P1_700", url: "https://www.facebook.com/P1_700" });
+    expect(calls.map((c) => c.url.pathname.replace("/v26.0/", ""))).toEqual(["P1/photos", "P1/photos", "P1/photos", "P1/feed"]);
+    calls.slice(0, 3).forEach((c, i) => {
+      expect(c.form.source).toBe(`[archivo ${"abc"[i]}.jpg image/jpeg 3B]`);
+      expect(c.form.published).toBe("false"); // si se publicaran solas saldrian como tres publicaciones sueltas
+      expect(c.form).not.toHaveProperty("caption");
+    });
+    const feed = calls[3].form;
+    expect(feed.message).toBe("Álbum nuevo\n\nhttps://reservi.example");
+    expect(feed).not.toHaveProperty("link"); // con fotos adjuntas el enlace va dentro del texto
+    expect(JSON.parse(String(feed["attached_media[0]"]))).toEqual({ media_fbid: "PH-1" });
+    expect(JSON.parse(String(feed["attached_media[1]"]))).toEqual({ media_fbid: "PH-2" });
+    expect(JSON.parse(String(feed["attached_media[2]"]))).toEqual({ media_fbid: "PH-3" });
+    expect(String(feed.access_token)).toBe("PAGE-TOKEN");
+  });
+
+  it("si falla la subida de una foto no se crea la publicacion", async () => {
+    let n = 0;
+    const calls = stubFetchWithBodies(() => (++n === 2 ? { status: 400, body: { error: { message: "(#100) Invalid image", code: 100 } } } : { body: { id: `PH-${n}` } }));
+    const err = await publishToFacebookPage(page, { text: "x", linkUrl: null, images: [img("a"), img("b"), img("c")] }).catch((e) => e);
+    expect(err).toBeInstanceOf(MetaApiError);
+    expect(calls).toHaveLength(2);
+    expect(calls.some((c) => c.url.pathname.endsWith("/feed"))).toBe(false);
+  });
+
+  it("mas de 10 imagenes ni siquiera llama a Meta", async () => {
+    const calls = stubFetchWithBodies(() => ({ body: {} }));
+    const err = await publishToFacebookPage(page, { text: "x", linkUrl: null, images: Array.from({ length: 11 }, (_, i) => img(String(i))) }).catch((e) => e);
+    expect(err).toBeInstanceOf(PublishError);
+    expect(err.retryable).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("publicar un carrusel en Instagram", () => {
+  const img = (name: string) => ({ ...image, publicUrl: `https://app.example.com/media/${name}.jpg` });
+
+  it("crea un contenedor por imagen (hijos), uno padre que los reune en orden, y publica el padre", async () => {
+    let media = 0;
+    const calls = stubFetchWithBodies((url) => {
+      if (url.pathname.endsWith("/IG1/media")) return { body: { id: ++media <= 3 ? `CH-${media}` : "PADRE" } };
+      if (/\/(CH-\d|PADRE)$/.test(url.pathname)) return { body: { status_code: "FINISHED" } };
+      if (url.pathname.endsWith("/IG1/media_publish")) return { body: { id: "MEDIA-5" } };
+      if (url.pathname.endsWith("/MEDIA-5")) return { body: { permalink: "https://www.instagram.com/p/CAR/" } };
+      return { status: 404, body: { error: { message: "no", code: 803 } } };
+    });
+    const res = await publishToInstagram(ig, { text: "Carrusel #reservi", linkUrl: null, images: [img("a"), img("b"), img("c")] }, { pollMs: 0 });
+
+    expect(res).toEqual({ externalId: "MEDIA-5", url: "https://www.instagram.com/p/CAR/" });
+    expect(calls.map((c) => c.url.pathname.replace("/v26.0/", ""))).toEqual([
+      "IG1/media", "IG1/media", "IG1/media", "CH-1", "CH-2", "CH-3", "IG1/media", "PADRE", "IG1/media_publish", "MEDIA-5",
+    ]);
+    ["a", "b", "c"].forEach((name, i) => {
+      expect(calls[i].form).toMatchObject({ image_url: `https://app.example.com/media/${name}.jpg`, is_carousel_item: "true" });
+      expect(calls[i].form).not.toHaveProperty("caption"); // el pie va en el contenedor padre, no en cada hijo
+    });
+    expect(calls[6].form).toMatchObject({ media_type: "CAROUSEL", children: "CH-1,CH-2,CH-3", caption: "Carrusel #reservi" });
+    expect(calls[8].form).toMatchObject({ creation_id: "PADRE" });
+  });
+
+  it("si Instagram rechaza una de las imagenes, falla sin publicar y sin reintento", async () => {
+    let media = 0;
+    const calls = stubFetchWithBodies((url) => {
+      if (url.pathname.endsWith("/IG1/media")) return { body: { id: `CH-${++media}` } };
+      if (url.pathname.endsWith("/CH-2")) return { body: { status_code: "ERROR", status: "Error: Invalid image" } };
+      return { body: { status_code: "FINISHED" } };
+    });
+    const err = await publishToInstagram(ig, { text: "x", linkUrl: null, images: [img("a"), img("b")] }, { pollMs: 0 }).catch((e) => e);
+    expect(err).toBeInstanceOf(PublishError);
+    expect(err.retryable).toBe(false);
+    expect(err.message).toMatch(/rechazó una de las imágenes/);
+    expect(calls.some((c) => c.url.pathname.endsWith("media_publish"))).toBe(false);
+  });
+
+  it("si el carrusel nunca termina de procesarse, se puede reintentar", async () => {
+    let media = 0;
+    stubFetchWithBodies((url) => {
+      if (url.pathname.endsWith("/IG1/media")) return { body: { id: ++media <= 2 ? `CH-${media}` : "PADRE" } };
+      if (url.pathname.endsWith("/PADRE")) return { body: { status_code: "IN_PROGRESS" } };
+      return { body: { status_code: "FINISHED" } };
+    });
+    const err = await publishToInstagram(ig, { text: "x", linkUrl: null, images: [img("a"), img("b")] }, { pollMs: 0 }).catch((e) => e);
+    expect(err).toBeInstanceOf(PublishError);
+    expect(err.retryable).toBe(true);
+    expect(err.message).toMatch(/el carrusel/);
+  });
+
+  it("mas de 10 imagenes ni siquiera llama a Meta", async () => {
+    const calls = stubFetchWithBodies(() => ({ body: {} }));
+    const err = await publishToInstagram(ig, { text: "x", linkUrl: null, images: Array.from({ length: 11 }, (_, i) => img(String(i))) }).catch((e) => e);
+    expect(err).toBeInstanceOf(PublishError);
+    expect(calls).toHaveLength(0);
   });
 });
 
@@ -92,7 +199,7 @@ describe("publicar en Instagram", () => {
       if (url.pathname.endsWith("/MEDIA-9")) return { body: { permalink: "https://www.instagram.com/p/ABC/" } };
       return { status: 404, body: { error: { message: "no", code: 803 } } };
     });
-    const res = await publishToInstagram(ig, { text: "Pie de foto #reservi", linkUrl: null, image }, { pollMs: 0 });
+    const res = await publishToInstagram(ig, { text: "Pie de foto #reservi", linkUrl: null, images: [image] }, { pollMs: 0 });
 
     expect(res).toEqual({ externalId: "MEDIA-9", url: "https://www.instagram.com/p/ABC/" });
     expect(calls.map((c) => c.url.pathname.replace("/v26.0/", ""))).toEqual(["IG1/media", "CONT-1", "IG1/media_publish", "MEDIA-9"]);
@@ -108,7 +215,7 @@ describe("publicar en Instagram", () => {
       if (url.pathname.endsWith("/media_publish")) return { body: { id: "M" } };
       return { body: {} };
     });
-    const res = await publishToInstagram(ig, { text: "x", linkUrl: null, image }, { pollMs: 0 });
+    const res = await publishToInstagram(ig, { text: "x", linkUrl: null, images: [image] }, { pollMs: 0 });
     expect(res.externalId).toBe("M");
     expect(polls).toBe(3);
   });
@@ -118,7 +225,7 @@ describe("publicar en Instagram", () => {
       if (url.pathname.endsWith("/IG1/media")) return { body: { id: "C" } };
       return { body: { status_code: "ERROR", status: "Error: Invalid image" } };
     });
-    const err = await publishToInstagram(ig, { text: "x", linkUrl: null, image }, { pollMs: 0 }).catch((e) => e);
+    const err = await publishToInstagram(ig, { text: "x", linkUrl: null, images: [image] }, { pollMs: 0 }).catch((e) => e);
     expect(err).toBeInstanceOf(PublishError);
     expect(err.retryable).toBe(false);
     expect(err.message).toMatch(/rechazó la imagen/);
@@ -127,14 +234,14 @@ describe("publicar en Instagram", () => {
 
   it("si el contenedor nunca termina, falla con un error que se puede reintentar", async () => {
     stubFetchWithBodies((url) => (url.pathname.endsWith("/IG1/media") ? { body: { id: "C" } } : { body: { status_code: "IN_PROGRESS" } }));
-    const err = await publishToInstagram(ig, { text: "x", linkUrl: null, image }, { pollMs: 0 }).catch((e) => e);
+    const err = await publishToInstagram(ig, { text: "x", linkUrl: null, images: [image] }, { pollMs: 0 }).catch((e) => e);
     expect(err).toBeInstanceOf(PublishError);
     expect(err.retryable).toBe(true);
   });
 
   it("sin imagen ni siquiera llama a Meta", async () => {
     const calls = stubFetchWithBodies(() => ({ body: {} }));
-    const err = await publishToInstagram(ig, { text: "x", linkUrl: null, image: null }).catch((e) => e);
+    const err = await publishToInstagram(ig, { text: "x", linkUrl: null, images: [] }).catch((e) => e);
     expect(err).toBeInstanceOf(PublishError);
     expect(calls).toHaveLength(0);
   });
@@ -146,7 +253,7 @@ describe("publicar en Instagram", () => {
       if (url.pathname.endsWith("/media_publish")) return { body: { id: "M" } };
       return { status: 400, body: { error: { message: "x", code: 100 } } };
     });
-    const res = await publishToInstagram(ig, { text: "x", linkUrl: null, image }, { pollMs: 0 });
+    const res = await publishToInstagram(ig, { text: "x", linkUrl: null, images: [image] }, { pollMs: 0 });
     expect(res.externalId).toBe("M");
     expect(res.url).toBe("https://www.instagram.com/");
   });

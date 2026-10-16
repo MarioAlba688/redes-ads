@@ -70,7 +70,7 @@ async function publishOne(targetId: string, now: Date): Promise<Outcome> {
     where: { id: targetId },
     include: {
       account: { select: { id: true, name: true, kind: true, externalId: true, status: true, accessTokenEnc: true, scopes: true } },
-      post: { select: { id: true, text: true, linkUrl: true, status: true, media: { orderBy: { position: "asc" }, take: 1 } } },
+      post: { select: { id: true, text: true, linkUrl: true, status: true, media: { orderBy: { position: "asc" } } } },
     },
   });
   if (!target) return "failed";
@@ -103,21 +103,20 @@ async function publishOne(targetId: string, now: Date): Promise<Outcome> {
 
   try {
     const token = decryptSecret(target.account.accessTokenEnc);
-    const media = target.post.media[0];
-    let image: PublishImage | null = null;
-    if (media) {
+    const images: PublishImage[] = [];
+    for (const [i, media] of target.post.media.entries()) {
       const bytes = await readImage(media.storageKey);
-      if (!bytes) throw new PublishError(MISSING_IMAGE_MESSAGE, false);
-      image = {
+      if (!bytes) throw new PublishError(target.post.media.length > 1 ? `La imagen ${i + 1}: ${MISSING_IMAGE_MESSAGE}` : MISSING_IMAGE_MESSAGE, false);
+      images.push({
         bytes,
         mimeType: media.mimeType,
-        filename: `imagen.${media.mimeType === "image/png" ? "png" : "jpg"}`,
+        filename: `imagen-${i + 1}.${media.mimeType === "image/png" ? "png" : "jpg"}`,
         // Solo Instagram la descarga por URL; Facebook recibe el archivo directamente.
         publicUrl: target.account.kind === "INSTAGRAM_PROFILE" ? publicMediaUrl(media.storageKey) : "",
-      };
+      });
     }
 
-    const input = { text: target.post.text, linkUrl: target.post.linkUrl, image };
+    const input = { text: target.post.text, linkUrl: target.post.linkUrl, images };
     const account = { externalId: target.account.externalId, token };
     const result =
       target.account.kind === "INSTAGRAM_PROFILE" ? await publishToInstagram(account, input) : await publishToFacebookPage(account, input);

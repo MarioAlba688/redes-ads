@@ -173,7 +173,7 @@ La conexión la autoriza la persona que administra las cuentas publicitarias de 
 
 | Paso | Quién | Qué pasa |
 |---|---|---|
-| Crear | Administrador, Editor | *Publicaciones → Nueva publicación*: eliges la marca, cuentas de qué quieres publicar y la IA propone opciones. Eliges una, la editas, marcas los destinos, añades una imagen (JPG o PNG, máx. 8 MB; los PNG se convierten solos a JPG al subirlos) y guardas el **borrador**. |
+| Crear | Administrador, Editor | *Publicaciones → Nueva publicación*: eliges la marca, cuentas de qué quieres publicar y la IA propone opciones. Eliges una, la editas, marcas los destinos, añades **hasta 10 imágenes** (JPG o PNG, máx. 8 MB cada una; se eligen varias a la vez, los PNG se convierten solos a JPG al subirlos y se puede cambiar el orden: la primera es la portada) y guardas el **borrador**. |
 | Enviar a revisión | Administrador, Editor | La app comprueba antes todo lo que haría fallar la publicación (texto vacío o demasiado largo, destino desconectado, imagen que Instagram rechazaría). |
 | Aprobar o devolver | Administrador, Aprobador | **Aprobar** (opcionalmente con fecha y hora, que quedan programadas) o **devolver con una nota** para que el editor corrija. |
 | Programar o publicar ya | Administrador, Aprobador | Fecha y hora en la zona horaria de la marca (mínimo 2 minutos adelante). *Publicar ahora* sale en segundos. También se puede **cancelar**. |
@@ -201,7 +201,9 @@ Un rol de **Solo lectura** ve las publicaciones, el calendario y el historial, p
 
 **Las imágenes no están en la base de datos: viven en el disco de cada servidor.** Si dos copias de la app (por ejemplo tu PC y el servidor) usan la misma base de datos, cada una solo ve los archivos que ella misma subió; y en un contenedor (Docker/Easypanel) todo lo que no esté en un **volumen** se borra al redesplegar. En ambos casos aparece *«No se encontró el archivo de la imagen en este servidor»* al publicar o al crear un anuncio nuevo, y en el Manual, «Tu estado ahora», un aviso con cuántas imágenes faltan. Arreglo: `MEDIA_DIR` en un volumen persistente (en Easypanel, **Mounts → Volume** con la ruta `/data/media`) y una sola copia de la app por base de datos. Las imágenes ya perdidas se recuperan así: en un **borrador**, *Quitar imagen* y subirla otra vez; en una publicación **ya publicada**, su ficha avisa «El archivo de esta imagen ya no está en el servidor» y ofrece **volver a subirla** (debe ser la original: la app comprueba que mida lo mismo, así no sirve para cambiar lo aprobado ni lo programado). Impulsar una publicación *ya publicada* no necesita la imagen.
 
-**Todavía no incluye:** carruseles, vídeo, historias ni más de una imagen por publicación.
+**Varias imágenes:** hasta 10 por publicación. En Facebook se suben todas sin publicar y salen juntas en una sola publicación; en Instagram salen como **carrusel** (un contenedor por imagen y uno padre que las reúne). Los anuncios usan solo la primera imagen.
+
+**Todavía no incluye:** vídeo, historias, ni anuncios de carrusel.
 
 ## Estadísticas de las publicaciones
 
@@ -234,6 +236,7 @@ Además de **ver** el rendimiento, la sección **Anuncios** permite **crear y ad
 - **Impulsar una publicación** que ya salió en Facebook o Instagram (también desde su ficha en Publicaciones): objetivo (más interacción o más alcance), presupuesto por día, duración y a quién se le muestra.
 - **Anuncio nuevo** con el texto y la imagen de una publicación (sin publicarla en tu página), con titular, enlace y botón. Objetivos: visitas al sitio, alcance o interacción.
 - **Segmentación**: países, ciudades con radio, edad, género e **intereses** (se buscan en Meta mientras escribes).
+- **Recomendaciones de cuándo pagar publicidad** (en *Crear anuncio*, recuadro «¿Cuándo conviene activarlo?», y en el Manual, sección 9): qué días de la semana suelen rendir según a quién le vendes, las próximas quincenas y fechas fuertes de Colombia (calculadas, nunca viejas), cómo juntar un presupuesto bajo en una racha corta y cómo programarlo con la activación. Es una guía general, no datos de tu cuenta.
 - **Campañas en Meta**: lo que ya existe en la cuenta (también lo creado directamente en Meta): pausar, activar (solo si el gasto diario cabe en el tope) y cambiar el presupuesto diario.
 - **Crear de nuevo** un anuncio que quedó en «No se pudo crear»: la lista y la ficha traen el botón; abre el formulario con los mismos datos y un aviso de qué corregir (por ejemplo, subir el presupuesto por encima del mínimo de Meta sin pasar del tope, o restaurar primero la imagen perdida). Crea un anuncio nuevo, en pausa y con todas las comprobaciones; el intento fallido queda como historial y quien aprueba puede **descartarlo**. Como el fallo se deshizo en Meta, no se gastó nada.
 

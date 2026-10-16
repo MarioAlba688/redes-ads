@@ -155,6 +155,21 @@ async function makePost({ brand = BRAND_RES, status = "DRAFT", text, link = null
   return { id, text, storageKey };
 }
 
+/** Agrega n imagenes JPG (archivo + fila) a una publicacion, en orden y distintas entre si. */
+async function addImages(postId, n, { w = 1080, h = 1350 } = {}) {
+  const keys = [];
+  for (let i = 0; i < n; i++) {
+    const key = `${randomBytes(24).toString("hex")}.jpg`;
+    fs.writeFileSync(path.join(MEDIA_DIR, key), jpeg(w, h + i));
+    await db.sql(
+      "INSERT INTO PostMedia (id, postId, mimeType, size, width, height, storageKey, originalName, position, createdAt) VALUES (?, ?, 'image/jpeg', 100, ?, ?, ?, ?, ?, NOW(3))",
+      [`${postId}-x${i}`, postId, w, h + i, key, `f${i}.jpg`, i],
+    );
+    keys.push(key);
+  }
+  return keys;
+}
+
 const postRow = async (id) =>
   (await db.sql(`SELECT status, DATE_FORMAT(scheduledAt, '${ISO}') AS scheduledAt, DATE_FORMAT(publishedAt, '${ISO}') AS publishedAt, reviewNote, reviewedById FROM Post WHERE id=?`, [id]))[0];
 const targetsOf = async (id) =>
@@ -316,8 +331,13 @@ try {
   const mainKey = jpgRow.storageKey;
 
   const mediaUrl = `${APP}/api/posts/${mainId}/media`;
-  const second = await edgarCtx.request.post(mediaUrl, { multipart: { file: file("otra.jpg", "image/jpeg", jpeg(1080, 1080)) }, headers: { origin: APP } });
-  check("solo se admite una imagen por publicación", second.status() === 409);
+  const full = await makePost({ status: "DRAFT", targets: ["acc-fb-reservi"] });
+  await addImages(full.id, 10);
+  const eleventh = await edgarCtx.request.post(`${APP}/api/posts/${full.id}/media`, { multipart: { file: file("once.jpg", "image/jpeg", jpeg(1080, 1080)) }, headers: { origin: APP } });
+  check("una publicación admite hasta 10 imágenes: la 11.ª se rechaza y dice el límite", eleventh.status() === 409 && /hasta 10 imágenes/.test((await eleventh.json()).error));
+  await edgar.goto(`${APP}/publicaciones/${full.id}`);
+  check("con 10 imágenes la pantalla ya no ofrece subir más", (await edgar.locator("#media-file").count()) === 0 && (await edgar.getByText(/Llegaste al máximo de 10 imágenes/).count()) === 1);
+  await edgar.goto(`${APP}/publicaciones/${mainId}`);
   const cross = await edgarCtx.request.post(mediaUrl, { multipart: { file: file("x.jpg", "image/jpeg", jpeg(1080, 1080)) }, headers: { origin: "https://evil.example" } });
   check("una subida desde otro origen se rechaza", cross.status() === 403);
   const noSession = await fetch(mediaUrl, { method: "POST", redirect: "manual", headers: { origin: APP }, body: (() => { const f = new FormData(); f.set("file", new Blob([mainJpg], { type: "image/jpeg" }), "x.jpg"); return f; })() });
@@ -446,6 +466,65 @@ try {
   await shot(aura, "publicacion-publicada.png");
   const auditCount = async (action, target) => Number((await db.sql("SELECT COUNT(*) c FROM AuditLog WHERE action=? AND target=?", [action, target]))[0].c);
   check("la auditoría registra cada paso del flujo", (await auditCount("post.submitted", mainId)) === 2 && (await auditCount("post.returned", mainId)) === 1 && (await auditCount("post.approved", mainId)) === 1 && (await auditCount("post.target_published", mainId)) === 2 && (await auditCount("post.published", mainId)) === 1);
+
+  // ------------------------------------------------------------ 3b. varias imágenes: subir juntas, ordenar y publicar (Facebook: fotos adjuntas; Instagram: carrusel)
+  calm();
+  const multi = await makePost({ status: "DRAFT", targets: ["acc-fb-reservi", "acc-ig-reservi"] });
+  await edgar.goto(`${APP}/publicaciones/${multi.id}`);
+  const mrows = () => db.sql("SELECT id, originalName, storageKey, position FROM PostMedia WHERE postId=? ORDER BY position", [multi.id]);
+  const names = async () => (await mrows()).map((r) => r.originalName).join();
+  const manyJpg = [jpeg(1080, 1350), jpeg(1080, 1351), jpeg(1080, 1352)];
+  await edgar.locator("#media-file").setInputFiles(manyJpg.map((b, i) => file(`foto-${i + 1}.jpg`, "image/jpeg", b)));
+  check("elegir 3 archivos a la vez sube las 3, en el orden en que se eligieron", await waitFor(async () => ((await names()) === "foto-1.jpg,foto-2.jpg,foto-3.jpg" ? true : null), { timeout: 40_000 }) && (await mrows()).map((r) => r.position).join() === "0,1,2");
+  await edgar.getByAltText("Imagen 3 de la publicación").waitFor();
+  check("la primera se marca como portada y no se puede mover antes", (await edgar.getByText("1 · Portada").isVisible()) && (await edgar.getByRole("button", { name: "Mover la imagen 1 antes" }).isDisabled()) && (await edgar.getByRole("button", { name: "Mover la imagen 3 después" }).isDisabled()));
+
+  await edgar.getByRole("button", { name: "Mover la imagen 3 antes" }).click();
+  check("mover una imagen antes cambia el orden guardado (1, 3, 2)", await waitFor(async () => ((await names()) === "foto-1.jpg,foto-3.jpg,foto-2.jpg" ? true : null), { timeout: 20_000 }));
+  await edgar.locator("#media-file").setInputFiles(file("foto-4.jpg", "image/jpeg", jpeg(1080, 1353)));
+  check("una imagen más se agrega al final", await waitFor(async () => ((await names()) === "foto-1.jpg,foto-3.jpg,foto-2.jpg,foto-4.jpg" ? true : null), { timeout: 30_000 }));
+  const removedKey = (await mrows()).find((r) => r.originalName === "foto-2.jpg").storageKey;
+  await edgar.getByRole("button", { name: "Quitar imagen 3" }).click();
+  check("quitar una del medio deja el orden de las demás y borra su archivo (1, 3, 4)", (await waitFor(async () => ((await names()) === "foto-1.jpg,foto-3.jpg,foto-4.jpg" ? true : null), { timeout: 20_000 })) && !mediaFiles().includes(removedKey));
+  await edgar.reload();
+  check("la pantalla muestra las 3 en ese orden", (await edgar.getByAltText(/Imagen \d de la publicación/).count()) === 3);
+  await shot(edgar, "borrador-varias-imagenes.png");
+  await edgar.setViewportSize({ width: 390, height: 900 });
+  await edgar.reload();
+  check("en el móvil las imágenes caben sin scroll horizontal", await edgar.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await shot(edgar, "borrador-varias-imagenes-movil.png");
+  await edgar.setViewportSize({ width: 1280, height: 900 });
+
+  const finalRows = await mrows();
+  const wantShas = finalRows.map((r) => sha(fs.readFileSync(path.join(MEDIA_DIR, r.storageKey))));
+  const published1 = fake.published().length;
+  await db.sql(`UPDATE Post SET status='SCHEDULED', scheduledAt = ${inMinutes(-1)} WHERE id=?`, [multi.id]);
+  check("al llegar la hora, el worker publica la de varias imágenes en los 2 destinos", await waitPost(multi.id, ["PUBLISHED"]));
+  const sentM = fake.published().slice(published1);
+  const unpub = sentM.filter((p) => p.kind === "photo-unpublished");
+  const feedM = sentM.find((p) => p.kind === "feed" && p.attached);
+  check("Facebook recibió las 3 fotos SIN publicar, en el orden de la publicación e idénticas a las subidas", unpub.length === 3 && unpub.map((p) => p.sha256).join() === wantShas.join(), JSON.stringify(unpub.map((p) => p.name)));
+  check("y una sola publicación que las adjunta en ese mismo orden, con el texto", !!feedM && feedM.attached.map((a) => a.sha256).join() === wantShas.join() && feedM.message.replace(/\r\n/g, "\n") === multi.text);
+  check("Facebook no publicó las fotos sueltas", !sentM.some((p) => p.kind === "photo"));
+  const carousel = sentM.find((p) => p.kind === "ig-carousel");
+  check("Instagram recibió un carrusel con las 3 imágenes (cada hijo con su URL pública, descargable sin sesión) en orden", !!carousel && carousel.children.length === 3 && carousel.children.every((c) => c.kind === "ig-child" && c.fetched.status === 200 && c.caption === null) && carousel.children.map((c) => c.fetched.sha256).join() === wantShas.join());
+  check("el pie va en el carrusel y se publicó el carrusel (no los hijos)", carousel?.caption?.replace(/\r\n/g, "\n") === multi.text && sentM.some((p) => p.kind === "ig-publish" && p.creation === carousel.id && p.carousel === true) && !sentM.some((p) => p.kind === "ig-publish" && p.carousel === false));
+  const multiTargets = await targetsOf(multi.id);
+  check("cada destino quedó publicado en el primer intento", multiTargets.length === 2 && multiTargets.every((t) => t.status === "PUBLISHED" && t.attempts === 1 && t.error === null));
+  await aura.goto(`${APP}/publicaciones/${multi.id}`);
+  check("la ficha de la publicada muestra las 3 imágenes y dice cómo salieron", (await aura.getByAltText(/Imagen \d de 3 de la publicación/).count()) === 3 && (await aura.getByText(/3 imágenes: en Facebook salen juntas y en Instagram como carrusel/).count()) === 1);
+
+  // Si Instagram rechaza una imagen del carrusel: falla sin publicar nada y se explica.
+  const multiBad = await makePost({ status: "DRAFT", targets: ["acc-ig-reservi"] });
+  await addImages(multiBad.id, 3);
+  fake.setScenario({ igContainer: "error" });
+  const published2 = fake.published().length;
+  await db.sql(`UPDATE Post SET status='SCHEDULED', scheduledAt = ${inMinutes(-1)} WHERE id=?`, [multiBad.id]);
+  check("si Instagram rechaza una imagen del carrusel, la publicación falla", await waitPost(multiBad.id, ["FAILED"]));
+  const badTarget = (await targetsOf(multiBad.id))[0];
+  check("sin reintento y con el motivo en español", badTarget.attempts === 1 && /rechazó una de las imágenes/.test(badTarget.error ?? ""), String(badTarget.error));
+  check("y no se publicó nada en Instagram", !fake.published().slice(published2).some((p) => p.kind === "ig-publish"));
+  calm();
 
   // ------------------------------------------------------------ 4. «publicar ahora» y choque entre procesos
   // A (con worker) y B (sin worker, pero que publica al pulsar el botón) compiten por las mismas filas.
