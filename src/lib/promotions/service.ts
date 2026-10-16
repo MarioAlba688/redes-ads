@@ -4,7 +4,7 @@ import { audit } from "@/lib/audit";
 import { decryptSecret } from "@/lib/crypto";
 import { db } from "@/lib/db";
 import { describeInternalError } from "@/lib/errors";
-import { readImage } from "@/lib/media";
+import { MISSING_IMAGE_MESSAGE, readImage } from "@/lib/media";
 import * as meta from "@/lib/meta/marketing";
 import { missingAdsWriteMessage, missingAdsWriteScope } from "@/lib/meta/scopes";
 import { fromMinorUnits, toMinorUnits } from "@/lib/promotions/currency";
@@ -271,7 +271,7 @@ export async function createPromotion(actorId: string, req: CreateRequest, now =
       ids.creative = await meta.createCreative(auth, body);
     } else {
       const bytes = r.image ? await readImage(r.image.key) : null;
-      if (!r.image || !bytes) throw new SafetyError("No se encontró el archivo de la imagen en el servidor.");
+      if (!r.image || !bytes) throw new SafetyError(MISSING_IMAGE_MESSAGE);
       const ext = r.image.mimeType === "image/png" ? "png" : "jpg";
       const hash = await meta.uploadAdImage(auth, { bytes, filename: `anuncio.${ext}`, mimeType: r.image.mimeType });
       ids.creative = await meta.createCreative(

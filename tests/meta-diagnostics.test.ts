@@ -213,6 +213,22 @@ describe("buildMetaDiagnostics", () => {
     expect(ads.detail).not.toContain("Cuenta extra 5");
   });
 
+  it("archivos: avisa cuantas imagenes registradas no estan en la carpeta de este servidor (redespliegue sin volumen, o otra copia de la app)", () => {
+    const c = buildMetaDiagnostics({ ...base, media: { total: 4, missing: 2 } });
+    const f = byId(c, "archivos");
+    expect(f.status).toBe("warn");
+    expect(f.title).toContain("2 de 4 imágenes");
+    expect(f.detail).toMatch(/volumen para MEDIA_DIR/);
+    expect(f.detail).toMatch(/otra copia de la app/);
+    expect(f.anchor).toBe("problemas");
+  });
+
+  it("archivos: con todas presentes queda en orden, y sin imagenes registradas no se menciona", () => {
+    expect(byId(buildMetaDiagnostics({ ...base, media: { total: 3, missing: 0 } }), "archivos").status).toBe("ok");
+    expect(buildMetaDiagnostics({ ...base, media: { total: 0, missing: 0 } }).some((c) => c.id === "archivos")).toBe(false);
+    expect(buildMetaDiagnostics(base).some((c) => c.id === "archivos")).toBe(false);
+  });
+
   it("nameList: hasta el maximo los nombra todos", () => {
     expect(nameList(["A", "B"])).toBe("A, B");
     expect(nameList(["A", "B", "C"], 2)).toBe("A, B y 1 más");

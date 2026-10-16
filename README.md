@@ -199,6 +199,8 @@ Un rol de **Solo lectura** ve las publicaciones, el calendario y el historial, p
 
 **Qué guardar en las copias de seguridad:** la base de datos **y la carpeta de imágenes** (`MEDIA_DIR`, por defecto `storage/media`).
 
+**Las imágenes no están en la base de datos: viven en el disco de cada servidor.** Si dos copias de la app (por ejemplo tu PC y el servidor) usan la misma base de datos, cada una solo ve los archivos que ella misma subió; y en un contenedor (Docker/Easypanel) todo lo que no esté en un **volumen** se borra al redesplegar. En ambos casos aparece *«No se encontró el archivo de la imagen en este servidor»* al publicar o al crear un anuncio nuevo, y en el Manual, «Tu estado ahora», un aviso con cuántas imágenes faltan. Arreglo: `MEDIA_DIR` en un volumen persistente (en Easypanel, **Mounts → Volume** con la ruta `/data/media`), una sola copia de la app por base de datos y volver a subir las imágenes perdidas. Impulsar una publicación *ya publicada* no necesita la imagen.
+
 **Todavía no incluye:** carruseles, vídeo, historias ni más de una imagen por publicación.
 
 ## Estadísticas de las publicaciones

@@ -3,7 +3,7 @@ import { audit } from "@/lib/audit";
 import { decryptSecret } from "@/lib/crypto";
 import { db } from "@/lib/db";
 import { describeInternalError } from "@/lib/errors";
-import { readImage } from "@/lib/media";
+import { MISSING_IMAGE_MESSAGE, readImage } from "@/lib/media";
 import { MetaApiError } from "@/lib/meta/errors";
 import {
   backoffMinutes,
@@ -107,7 +107,7 @@ async function publishOne(targetId: string, now: Date): Promise<Outcome> {
     let image: PublishImage | null = null;
     if (media) {
       const bytes = await readImage(media.storageKey);
-      if (!bytes) throw new PublishError("No se encontró el archivo de la imagen en el servidor.", false);
+      if (!bytes) throw new PublishError(MISSING_IMAGE_MESSAGE, false);
       image = {
         bytes,
         mimeType: media.mimeType,

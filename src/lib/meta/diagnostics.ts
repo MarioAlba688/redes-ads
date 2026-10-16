@@ -33,6 +33,8 @@ export type DiagnosticInput = {
   appUrl: string;
   /** MEDIA_PUBLIC_BASE_URL, si esta definida. */
   mediaBaseUrl: string | null;
+  /** Imagenes registradas en la base de datos (las mas recientes) y cuantas no estan en la carpeta de medios de este servidor. */
+  media?: { total: number; missing: number };
 };
 
 const IG_SCOPES = ["instagram_basic", PUBLISH_SCOPE.INSTAGRAM_PROFILE] as const;
@@ -213,6 +215,23 @@ export function buildMetaDiagnostics(input: DiagnosticInput): DiagnosticCheck[] 
           anchor: "instagram",
         },
   );
+
+  // Los archivos de las imagenes viven en el disco de cada servidor; la base de datos puede ser compartida.
+  if (input.media && input.media.total > 0) {
+    const { total, missing } = input.media;
+    checks.push(
+      missing === 0
+        ? { id: "archivos", status: "ok", title: "Las imágenes están en la carpeta de este servidor", detail: `Las ${total} imágenes registradas más recientes tienen su archivo.` }
+        : {
+            id: "archivos",
+            status: "warn",
+            title: `${missing} de ${total} imágenes registradas no están en la carpeta de este servidor`,
+            detail:
+              "Pasa si el servidor se redespliega sin un volumen para MEDIA_DIR, o si esas publicaciones se crearon en otra copia de la app que usa la misma base de datos. Esas publicaciones no pueden mostrar su imagen ni usarse en un anuncio nuevo: vuelve a subirla. Para que no se repita, pon MEDIA_DIR en un volumen que sobreviva a los despliegues.",
+            anchor: "problemas",
+          },
+    );
+  }
 
   const image = publicImageCheck(input.appUrl, input.mediaBaseUrl);
   checks.push({

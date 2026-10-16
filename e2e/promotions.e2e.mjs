@@ -361,6 +361,20 @@ try {
   await edgar.locator("#cuenta").selectOption(ACC_COP);
   check("una publicación sin imagen avisa que el anuncio la necesita", (await edgar.getByText(/no tiene imagen: el anuncio la necesita/).count()) === 1);
 
+  // El archivo de la imagen ya no esta en el servidor (redespliegue sin volumen, o la publicacion se creo en otra copia de la app)
+  const lost = await makePost({ text: `Imagen perdida ${tag()}`, status: "DRAFT" });
+  fs.rmSync(path.join(MEDIA_DIR, lost.storageKey));
+  await edgar.goto(`${APP}/anuncios/nuevo?tipo=anuncio&publicacion=${lost.id}`);
+  await edgar.locator("#cuenta").selectOption(ACC_COP);
+  await edgar.locator("#presupuesto").fill("20000");
+  await edgar.locator("#enlace").fill("https://reservi.co");
+  await submit(edgar);
+  const lostMsg = await formError(edgar);
+  check("si el archivo de la imagen ya no está, lo explica (volumen de MEDIA_DIR, otra copia de la app) y dice qué hacer", /No se encontró el archivo de la imagen en este servidor/.test(lostMsg) && /MEDIA_DIR/.test(lostMsg) && /Vuelve a subir la imagen/.test(lostMsg), lostMsg);
+  const lostCamps = metaAds().campaigns.filter((c) => c.name.startsWith("Anuncio: Imagen perdida"));
+  check("y no queda nada creado en Meta (se borra lo que se alcanzó a crear)", lostCamps.length === 1 && lostCamps.every((c) => c.status === "DELETED") && metaAds().ads.filter((a) => a.name.startsWith("Anuncio: Imagen perdida")).length === 0);
+  check("el registro queda como «No se pudo crear»", (await db.sql("SELECT status FROM AdPromotion WHERE name LIKE 'Anuncio: Imagen perdida%'"))[0]?.status === "FAILED");
+
   // ------------------------------------------------------------ 7. proteccion del dinero: nada queda a medias ni mal convertido
   const before = metaAds();
   const liveObjects = () => {
@@ -589,6 +603,7 @@ try {
   check("el Manual explica los anuncios y está en su índice", (await admin.locator("#anuncios").getByRole("heading", { name: "8. Anuncios: crear, activar y controlar el gasto" }).count()) === 1 && (await admin.locator('nav[aria-label="En esta guía"] a[href="#anuncios"]').count()) === 1);
   check("«Tu estado ahora» confirma que se pueden crear anuncios cuando hay permiso y tope", (await admin.getByText("Se pueden crear anuncios").count()) === 1);
   check("la línea recomendada de META_SCOPES incluye ads_management", (await admin.getByText(/META_SCOPES="ads_read,ads_management,/).count()) >= 1);
+  check("«Tu estado ahora» avisa que hay imágenes registradas cuyo archivo no está en este servidor", (await admin.getByText(/imágenes registradas no están en la carpeta de este servidor/).count()) === 1);
   await setCap(ACC_USD, null);
   await admin.goto(`${APP}/manual`);
   check("sin tope en una cuenta, el estado lo avisa y manda al paso", (await admin.getByText(/1 cuenta\(s\) publicitaria\(s\) sin tope de gasto diario/).count()) === 1);

@@ -4,6 +4,7 @@ import { Badge, Card, PageHeader } from "@/components/ui";
 import { requireUser } from "@/lib/auth/dal";
 import { db } from "@/lib/db";
 import { env } from "@/lib/env";
+import { imageExists } from "@/lib/media";
 import { META_SCOPES } from "@/lib/meta/config";
 import { buildMetaDiagnostics, isLocalHost, type CheckStatus } from "@/lib/meta/diagnostics";
 import { can } from "@/lib/permissions";
@@ -35,6 +36,13 @@ const STATUS: Record<CheckStatus, { icon: string; label: string; tone: "success"
   todo: { icon: "○", label: "Pendiente", tone: "neutral" },
 };
 
+/** Cuantas de las ultimas imagenes registradas en la base tienen su archivo en la carpeta de medios de este servidor. */
+async function mediaFilesStatus(): Promise<{ total: number; missing: number }> {
+  const rows = await db.postMedia.findMany({ orderBy: { createdAt: "desc" }, take: 100, select: { storageKey: true } });
+  const present = await Promise.all(rows.map((r) => imageExists(r.storageKey)));
+  return { total: rows.length, missing: present.filter((p) => !p).length };
+}
+
 export default async function ManualPage() {
   const user = await requireUser();
   const e = env();
@@ -47,8 +55,12 @@ export default async function ManualPage() {
   const scopes = e.META_SCOPES ? e.META_SCOPES.split(",").map((s) => s.trim()).filter(Boolean) : [...META_SCOPES];
 
   // El diagnostico muestra la configuracion del servidor: solo para quien administra las cuentas (no incluye secretos).
+  // Las imagenes se guardan en disco (MEDIA_DIR) y la base de datos puede ser compartida con otra copia de la app:
+  // se cuenta cuantas de las ultimas imagenes registradas faltan en ESTE servidor.
+  const media = can(user.role, "accounts.manage") ? await mediaFilesStatus() : undefined;
   const diagnostics = can(user.role, "accounts.manage")
     ? buildMetaDiagnostics({
+        media,
         configured: !!(e.META_APP_ID && e.META_APP_SECRET),
         scopes,
         appUrl,
@@ -524,6 +536,16 @@ export default async function ManualPage() {
             <Problem message="La publicación quedó «Publicada en parte» (salió en Facebook pero no en Instagram)">
               <p>
                 Cada destino se publica por separado. Arregla el motivo que aparece en el destino que falló y pulsa <UI>Reintentar los que fallaron</UI>: solo se repite el que falló, nunca se vuelve a publicar en Facebook.
+              </p>
+            </Problem>
+            <Problem message="«No se encontró el archivo de la imagen en este servidor» (al crear un anuncio nuevo o al publicar)">
+              <p>
+                La base de datos conoce la imagen pero su archivo ya no está en la carpeta de imágenes (<code>MEDIA_DIR</code>) de este servidor. Pasa por dos motivos: el servidor se <UI>redesplegó sin un volumen</UI> para esa carpeta (en un contenedor,
+                todo lo que no está en un volumen se borra al redesplegar), o la publicación se creó en <UI>otra copia de la app</UI> que usa la misma base de datos (por ejemplo tu PC y el servidor): los archivos están en el disco de quien los subió.
+              </p>
+              <p>
+                Para arreglar lo ya perdido, vuelve a subir la imagen en la publicación (en Publicaciones, <UI>Quitar imagen</UI> y subirla otra vez). Impulsar una publicación <em>ya publicada</em> no necesita la imagen: solo la usa «Anuncio nuevo». Para que no se repita,
+                pon <code>MEDIA_DIR</code> en un volumen persistente (en Easypanel: <UI>Mounts → Volume</UI> con la ruta <code>/data/media</code>) y usa una sola copia de la app contra cada base de datos. En «Tu estado ahora» verás cuántas imágenes faltan.
               </p>
             </Problem>
             <Problem message="«Esta cuenta publicitaria todavía no tiene un tope de gasto diario»">

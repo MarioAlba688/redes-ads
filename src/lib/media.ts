@@ -1,6 +1,6 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { env } from "@/lib/env";
 import type { ImageInfo } from "@/lib/media-format";
@@ -40,6 +40,27 @@ export async function readImage(key: string): Promise<Buffer | null> {
     return null;
   }
 }
+
+/** ¿Esta el archivo en la carpeta de medios de ESTE servidor? */
+export async function imageExists(key: string): Promise<boolean> {
+  const full = pathFor(key);
+  if (!full) return false;
+  try {
+    await access(/*turbopackIgnore: true*/ full);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Lo que se le dice a la persona cuando la base de datos conoce una imagen pero su archivo no esta en este servidor.
+ * La base de datos puede ser compartida, pero los archivos viven en el disco de cada servidor (MEDIA_DIR): si el
+ * servidor se redespliega sin un volumen para esa carpeta, o la publicacion se creo en otra copia de la app (por
+ * ejemplo en un PC apuntando a la misma base), el archivo no esta.
+ */
+export const MISSING_IMAGE_MESSAGE =
+  "No se encontró el archivo de la imagen en este servidor. La base de datos la tiene registrada pero el archivo ya no está en la carpeta de imágenes (pasa si el servidor se redespliega sin un volumen para MEDIA_DIR, o si la publicación se creó en otra copia de la app). Vuelve a subir la imagen en Publicaciones y revisa que MEDIA_DIR esté en un volumen que sobreviva a los despliegues.";
 
 /** Borra el archivo; si ya no esta no es un error. */
 export async function deleteImage(key: string): Promise<void> {
