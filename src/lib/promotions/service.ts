@@ -1,19 +1,23 @@
 import "server-only";
 import type { Prisma } from "@/generated/prisma/client";
 import { audit } from "@/lib/audit";
+import { syncAdAccount } from "@/lib/ads/sync";
 import { decryptSecret } from "@/lib/crypto";
 import { db } from "@/lib/db";
 import { describeInternalError } from "@/lib/errors";
 import { MISSING_IMAGE_MESSAGE, readImage } from "@/lib/media";
+import { todayInTimezone, toDbDate } from "@/lib/meta/dates";
 import * as meta from "@/lib/meta/marketing";
 import { missingAdsWriteMessage, missingAdsWriteScope } from "@/lib/meta/scopes";
 import { fromMinorUnits, toMinorUnits } from "@/lib/promotions/currency";
 import { classifyAdsError } from "@/lib/promotions/errors";
 import { facebookBoostCreativeBody, instagramBoostCreativeBody, newAdCreativeBody } from "@/lib/promotions/mapping";
 import { statusFromMeta } from "@/lib/promotions/status";
+import { daysInclusive, daysLeftInMonth, firstOfMonth, monthLabel, monthlyCapError, projectMonthly } from "@/lib/promotions/monthly";
 import { buildMetaTargeting } from "@/lib/promotions/targeting";
 import type { CtaType, PromotionInput, PromotionObjectiveName, Targeting } from "@/lib/promotions/types";
 import { validatePromotion } from "@/lib/promotions/validate";
+import { formatLocalInput } from "@/lib/time";
 
 // Crear, activar, pausar y administrar anuncios en Meta. AQUI viven las protecciones del dinero:
 //  - todo se crea en pausa y se COMPRUEBA con Meta que quedo en pausa y con el presupuesto pedido (un presupuesto mal
@@ -37,7 +41,18 @@ const STALE_CREATING_MS = 10 * 60_000;
 // Cuenta publicitaria
 // ---------------------------------------------------------------------------
 
-export type LoadedAccount = { id: string; name: string; auth: meta.AdAuth; currency: string; cap: number | null };
+export type LoadedAccount = {
+  id: string;
+  name: string;
+  auth: meta.AdAuth;
+  currency: string;
+  /** Tope de gasto diario por anuncio (null = sin fijar). */
+  cap: number | null;
+  /** Tope de gasto por mes calendario (null = sin tope mensual). */
+  monthlyCap: number | null;
+  timezone: string | null;
+  lastSyncedAt: Date | null;
+};
 
 /**
  * Carga la cuenta publicitaria y su token. Con `write` (lo normal) exige tambien el permiso ads_management; para solo
@@ -46,7 +61,7 @@ export type LoadedAccount = { id: string; name: string; auth: meta.AdAuth; curre
 export async function loadAdAccount(adAccountId: string, opts: { write?: boolean } = {}): Promise<Result<{ account: LoadedAccount }>> {
   const a = await db.socialAccount.findUnique({
     where: { id: adAccountId },
-    select: { id: true, name: true, platform: true, kind: true, externalId: true, status: true, accessTokenEnc: true, scopes: true, currency: true, dailyBudgetCap: true, metadata: true },
+    select: { id: true, name: true, platform: true, kind: true, externalId: true, status: true, accessTokenEnc: true, scopes: true, currency: true, dailyBudgetCap: true, monthlyBudgetCap: true, timezone: true, lastSyncedAt: true, metadata: true },
   });
   if (!a || a.platform !== "META" || a.kind !== "AD_ACCOUNT") return fail("Esa cuenta publicitaria no existe.");
   if (a.status !== "ACTIVE" || !a.accessTokenEnc) return fail(`La conexión de «${a.name}» venció o está desconectada. Reconecta Meta en Cuentas.`);
@@ -62,7 +77,7 @@ export async function loadAdAccount(adAccountId: string, opts: { write?: boolean
   } catch {
     return fail(`No se pudo leer la conexión de «${a.name}». Reconecta Meta en Cuentas.`);
   }
-  return { ok: true, account: { id: a.id, name: a.name, auth: { accountId: a.externalId, token }, currency: a.currency, cap: a.dailyBudgetCap === null ? null : Number(a.dailyBudgetCap) } };
+  return { ok: true, account: { id: a.id, name: a.name, auth: { accountId: a.externalId, token }, currency: a.currency, cap: a.dailyBudgetCap === null ? null : Number(a.dailyBudgetCap), monthlyCap: a.monthlyBudgetCap === null ? null : Number(a.monthlyBudgetCap), timezone: a.timezone, lastSyncedAt: a.lastSyncedAt } };
 }
 
 export async function markExpired(accountId: string, message: string) {
@@ -76,6 +91,73 @@ export async function failureMessage(e: unknown, accountId: string, context: str
   const c = classifyAdsError(e);
   if (c.expired) await markExpired(accountId, c.message);
   return c.message;
+}
+
+// ---------------------------------------------------------------------------
+// Tope mensual
+// ---------------------------------------------------------------------------
+
+/** Si el rendimiento descargado de Meta tiene mas de esto, se vuelve a descargar antes de decidir con el gasto del mes. */
+const SPEND_FRESH_MS = 60 * 60_000;
+/** Si no se pudo actualizar y el ultimo dato es mas viejo que esto, no se decide con el (se bloquea). */
+const SPEND_MAX_AGE_MS = 24 * 3_600_000;
+
+/** Un dia (AAAA-MM-DD) en la zona de la cuenta; si la zona no es valida, en UTC. */
+function dayIn(date: Date, timeZone: string | null): string {
+  try {
+    return formatLocalInput(date, timeZone || "UTC").slice(0, 10);
+  } catch {
+    return formatLocalInput(date, "UTC").slice(0, 10);
+  }
+}
+
+/** Gasto del mes en curso segun el rendimiento descargado de Meta, actualizandolo antes si esta viejo. */
+async function spentThisMonth(
+  account: { id: string; lastSyncedAt: Date | null },
+  today: string,
+  now: Date,
+): Promise<{ ok: true; spent: number } | { ok: false; error: string }> {
+  let last = account.lastSyncedAt;
+  if (!last || now.getTime() - last.getTime() > SPEND_FRESH_MS) {
+    const r = await syncAdAccount(account.id, { days: 31 });
+    if (r.ok) last = now;
+    else if (!last || now.getTime() - last.getTime() > SPEND_MAX_AGE_MS) {
+      return { ok: false, error: `No se pudo comprobar cuánto se ha gastado este mes en Meta (${r.error}). Inténtalo de nuevo en unos minutos.` };
+    }
+  }
+  const agg = await db.adInsightDaily.aggregate({
+    where: { accountId: account.id, date: { gte: toDbDate(firstOfMonth(today)), lte: toDbDate(today) } },
+    _sum: { spend: true },
+  });
+  return { ok: true, spent: Number(agg._sum.spend ?? 0) };
+}
+
+/**
+ * Motivo por el que NO se debe activar algo por el tope MENSUAL de la cuenta (null = cabe, o la cuenta no tiene tope mensual).
+ * `days`: cuantos dias, empezando hoy, puede gastar el candidato ("month": hasta fin de mes, para lo que no tiene fin conocido).
+ * `excludeId`: un anuncio de la app que se esta cambiando (cuenta como candidato, no como comprometido).
+ */
+export async function monthlyCapProblem(
+  account: LoadedAccount,
+  candidate: { dailyBudget: number; days: number | "month" },
+  opts: { excludeId?: string; now?: Date } = {},
+): Promise<string | null> {
+  if (account.monthlyCap === null) return null;
+  const now = opts.now ?? new Date();
+  const today = todayInTimezone(account.timezone, now);
+  const spent = await spentThisMonth(account, today, now);
+  if (!spent.ok) return spent.error;
+  const active = await db.adPromotion.findMany({
+    where: { adAccountId: account.id, status: "ACTIVE", ...(opts.excludeId ? { id: { not: opts.excludeId } } : {}) },
+    select: { dailyBudget: true, endsAt: true },
+  });
+  const months = projectMonthly({
+    today,
+    spentThisMonth: spent.spent,
+    active: active.map((a) => ({ dailyBudget: Number(a.dailyBudget), endsOn: a.endsAt ? dayIn(a.endsAt, account.timezone) : null })),
+    candidate: { dailyBudget: candidate.dailyBudget, days: candidate.days === "month" ? daysLeftInMonth(today) : candidate.days },
+  });
+  return monthlyCapError(months, account.monthlyCap, account.currency);
 }
 
 const pageIdOf = (metadata: unknown): string | null => {
@@ -211,6 +293,16 @@ export async function createPromotion(actorId: string, req: CreateRequest, now =
   if (errors.length) return fail(errors.join("\n"));
   const dailyMinor = toMinorUnits(input.dailyBudget, account.currency);
   if (dailyMinor === null) return fail("No se pudo calcular el presupuesto en la moneda de la cuenta.");
+  // Aviso temprano: un anuncio que por si solo no cabe en el tope mensual nunca se podria activar. (La comprobacion completa,
+  // con el gasto del mes y los otros anuncios activos, se hace al activar.)
+  if (account.monthlyCap !== null) {
+    const alone = monthlyCapError(
+      projectMonthly({ today: todayInTimezone(account.timezone, now), spentThisMonth: 0, active: [], candidate: { dailyBudget: input.dailyBudget, days: input.durationDays } }),
+      account.monthlyCap,
+      account.currency,
+    );
+    if (alone) return fail(alone);
+  }
 
   // Evita crear dos veces lo mismo con un doble clic: una creacion reciente de la misma persona para la misma publicacion sigue en curso.
   const inProgress = await db.adPromotion.count({
@@ -330,14 +422,14 @@ export async function createPromotion(actorId: string, req: CreateRequest, now =
 // ---------------------------------------------------------------------------
 
 type Loaded = {
-  row: { id: string; status: string; name: string; dailyBudget: Prisma.Decimal; currency: string; durationDays: number; metaCampaignId: string | null; metaAdSetId: string | null; metaAdId: string | null; adAccountId: string };
+  row: { id: string; status: string; name: string; dailyBudget: Prisma.Decimal; currency: string; durationDays: number; metaCampaignId: string | null; metaAdSetId: string | null; metaAdId: string | null; adAccountId: string; endsAt: Date | null };
   account: LoadedAccount;
 };
 
 async function loadPromotion(id: string): Promise<Result<Loaded>> {
   const row = await db.adPromotion.findUnique({
     where: { id },
-    select: { id: true, status: true, name: true, dailyBudget: true, currency: true, durationDays: true, metaCampaignId: true, metaAdSetId: true, metaAdId: true, adAccountId: true },
+    select: { id: true, status: true, name: true, dailyBudget: true, currency: true, durationDays: true, metaCampaignId: true, metaAdSetId: true, metaAdId: true, adAccountId: true, endsAt: true },
   });
   if (!row) return fail("Ese anuncio ya no existe.");
   const a = await loadAdAccount(row.adAccountId);
@@ -372,6 +464,9 @@ export async function activatePromotion(actorId: string, id: string, now = new D
       return fail(`En Meta el presupuesto diario es ${dailyNow} ${account.currency}, por encima del tope de la cuenta (${account.cap} ${account.currency}). Bájalo antes de activar.`);
     }
 
+    const monthly = await monthlyCapProblem(account, { dailyBudget: dailyNow, days: row.durationDays }, { excludeId: id, now });
+    if (monthly) return fail(monthly);
+
     await meta.setAdSetEnd(token, adSetId, endsAt);
     for (const target of [campaignId, adSetId, adId]) {
       await meta.setStatus(token, target, "ACTIVE");
@@ -405,7 +500,7 @@ async function rollbackToPaused(token: string, ids: string[]): Promise<string[]>
 }
 
 /** Pausa el anuncio (anuncio, conjunto y campaña). Pausar nunca gasta: puede hacerlo quien lo crea y quien lo aprueba. */
-export async function pausePromotion(actorId: string, id: string, now = new Date()): Promise<Result> {
+export async function pausePromotion(actorId: string | null, id: string, now = new Date()): Promise<Result> {
   const loaded = await loadPromotion(id);
   if (!loaded.ok) return loaded;
   const { row, account } = loaded;
@@ -433,6 +528,12 @@ export async function changePromotionBudget(actorId: string, id: string, newBudg
   if (minor === null) return fail(`El presupuesto no es válido para ${account.currency} (mayor que 0 y con los decimales que admite la moneda).`);
   if (account.cap === null) return fail("Esta cuenta publicitaria todavía no tiene un tope de gasto diario. Pídele al administrador que lo fije en Cuentas.");
   if (newBudget > account.cap) return fail(`El presupuesto (${newBudget} ${account.currency}) supera el tope de esta cuenta (${account.cap} ${account.currency}).`);
+  // Subir el presupuesto de un anuncio ACTIVO compromete mas gasto este mes: se vuelve a comprobar el tope mensual.
+  if (row.status === "ACTIVE" && newBudget > Number(row.dailyBudget)) {
+    const remaining = row.endsAt ? Math.max(daysInclusive(todayInTimezone(account.timezone, now), dayIn(row.endsAt, account.timezone)), 1) : row.durationDays;
+    const monthly = await monthlyCapProblem(account, { dailyBudget: newBudget, days: remaining }, { excludeId: id, now });
+    if (monthly) return fail(monthly);
+  }
   const { token } = account.auth;
   try {
     await meta.setDailyBudget(token, row.metaAdSetId, minor);
@@ -506,6 +607,7 @@ const SYNC_PAUSED_MS = 6 * 3_600_000;
 export async function syncDuePromotions(now = new Date(), limit = 5): Promise<{ synced: number; recovered: number }> {
   const out = { synced: 0, recovered: 0 };
   try {
+    await enforceMonthlyCaps(now);
     const stale = await db.adPromotion.updateMany({
       where: { status: "CREATING", createdAt: { lt: new Date(now.getTime() - STALE_CREATING_MS) } },
       data: { status: "FAILED", error: "La creación se interrumpió. Si quedó algo creado en Meta está en pausa: revísalo en el Administrador de anuncios." },
@@ -532,4 +634,40 @@ export async function syncDuePromotions(now = new Date(), limit = 5): Promise<{ 
     console.error("[anuncios] fallo la vuelta", describeInternalError(e));
   }
   return out;
+}
+
+/**
+ * Freno automatico del tope mensual: si el gasto del mes de una cuenta con tope mensual llego al tope, PAUSA los
+ * anuncios activos creados desde la app (y deja anotado por que). Lo que se activo directamente en Meta no se toca desde
+ * aqui: para eso sirve el «limite de gasto de la cuenta» de Meta. El gasto sale del rendimiento descargado de Meta, asi
+ * que puede llevar unas horas de retraso; con anuncios activos se vuelve a descargar cada hora. Nunca lanza.
+ */
+export async function enforceMonthlyCaps(now = new Date()): Promise<number> {
+  let paused = 0;
+  try {
+    const accounts = await db.socialAccount.findMany({
+      where: { platform: "META", kind: "AD_ACCOUNT", status: "ACTIVE", monthlyBudgetCap: { not: null }, promotions: { some: { status: "ACTIVE" } } },
+      select: { id: true, name: true, monthlyBudgetCap: true, timezone: true, currency: true, lastSyncedAt: true },
+    });
+    for (const a of accounts) {
+      const today = todayInTimezone(a.timezone, now);
+      const spent = await spentThisMonth(a, today, now);
+      const cap = Number(a.monthlyBudgetCap);
+      if (!spent.ok || spent.spent < cap) continue;
+
+      const money = (v: number) => `${new Intl.NumberFormat("es", { maximumFractionDigits: 2 }).format(v)} ${a.currency ?? ""}`.trim();
+      const note = `Se pausó automáticamente: el gasto de ${monthLabel(today.slice(0, 7))} (${money(spent.spent)}) llegó al tope mensual de la cuenta (${money(cap)}).`;
+      const active = await db.adPromotion.findMany({ where: { adAccountId: a.id, status: "ACTIVE" }, select: { id: true, name: true } });
+      for (const p of active) {
+        const r = await pausePromotion(null, p.id, now);
+        if (!r.ok) continue;
+        paused++;
+        await db.adPromotion.update({ where: { id: p.id }, data: { error: note } });
+        await audit("ads.paused_by_cap", { target: p.id, detail: { name: p.name, account: a.name, spent: spent.spent, cap } });
+      }
+    }
+  } catch (e) {
+    console.error("[anuncios] fallo el freno mensual", describeInternalError(e));
+  }
+  return paused;
 }

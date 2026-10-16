@@ -99,6 +99,11 @@ export default async function PromotionPage({ params, searchParams }: PageProps<
           <Alert>{p.error}</Alert>
         </div>
       )}
+      {status === "PAUSED" && p.error && (
+        <div className="mb-4">
+          <Alert tone="warning">{p.error}</Alert>
+        </div>
+      )}
 
       <Card className="divide-y divide-border">
         <dl className="divide-y divide-border">

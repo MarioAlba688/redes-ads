@@ -403,9 +403,12 @@ export default async function ManualPage() {
                 Todo anuncio se crea <UI>en pausa</UI>: no gasta nada hasta que una persona con permiso de <UI>aprobar</UI> lo active. Quien lo crea (Editor) no puede activarlo.
               </li>
               <li>
-                El administrador fija un <UI>tope de gasto diario por anuncio</UI> en cada cuenta publicitaria (en <Link href="/cuentas" className="font-medium text-primary hover:underline">Cuentas</Link>). Sin tope no se crea ni se activa nada, y ningún presupuesto puede pasarlo.
+                El administrador fija un <UI>tope de gasto diario por anuncio</UI> en cada cuenta publicitaria (en <Link href="/cuentas" className="font-medium text-primary hover:underline">Cuentas</Link>). Sin tope diario no se crea ni se activa nada, y ningún presupuesto puede pasarlo.
               </li>
               <li>Al activar, la app vuelve a leer el presupuesto que Meta tiene <em>en ese momento</em> y lo compara con el tope (alguien pudo cambiarlo en Meta).</li>
+              <li>
+                Además puede haber un <UI>tope mensual</UI> (opcional) por cuenta. Al activar, la app suma lo ya gastado en el mes, lo que otros anuncios activos todavía pueden gastar y lo que gastaría este, y si no cabe no lo activa. Y si el gasto del mes llega al tope, los anuncios activos creados desde la app se <UI>pausan solos</UI>.
+              </li>
               <li>Después de crear, comprueba con Meta que quedó en pausa y con el presupuesto pedido. Si algo no cuadra, lo borra y te avisa; si falla a medias, también borra lo que alcanzó a crear.</li>
               <li>
                 Los presupuestos se escriben en la moneda de la cuenta y se convierten con la tabla oficial de Meta (el peso colombiano no lleva decimales: 50.000 son cincuenta mil). Una moneda que no esté en esa tabla se rechaza.
@@ -422,7 +425,7 @@ export default async function ManualPage() {
               <Ext href="https://business.facebook.com/settings">business.facebook.com/settings</Ext> → <UI>Cuentas → Páginas</UI> → <UI>Agregar socios</UI> / asignar la cuenta publicitaria). Para impulsar Instagram, la cuenta también debe estar en el portafolio y vinculada a esa página.
             </Step>
             <Step>
-              <UI>El administrador fija el tope</UI> de cada cuenta en <Link href="/cuentas" className="font-medium text-primary hover:underline">Cuentas</Link> (por ejemplo 50.000 COP al día).
+              <UI>El administrador fija los topes</UI> de cada cuenta en <Link href="/cuentas" className="font-medium text-primary hover:underline">Cuentas</Link>: el <UI>diario</UI> por anuncio es obligatorio (por ejemplo 50.000 COP al día) y el <UI>mensual</UI> es opcional pero recomendado (por ejemplo 1.000.000 COP): con él la app no deja activar lo que no quepa en el mes y pausa los anuncios activos si el gasto del mes lo alcanza.
             </Step>
             <Step>
               <UI>Crear.</UI> En <Link href="/anuncios/creados" className="font-medium text-primary hover:underline">Anuncios → Creados en la app</Link>: <UI>Impulsar una publicación</UI> (una que ya salió en Facebook o Instagram; también desde su ficha en Publicaciones) o <UI>Anuncio nuevo</UI> (usa el texto y la imagen de una publicación, con enlace y botón, sin publicarla en tu página). Eliges objetivo, presupuesto por día, duración (1 a 30 días) y a quién se le muestra: países, ciudades con radio, edad, género e intereses buscados en Meta.
@@ -434,6 +437,34 @@ export default async function ManualPage() {
               <UI>Controlar.</UI> Desde la ficha: <UI>Pausar</UI> (también quien lo creó: pausar nunca gasta), <UI>cambiar el presupuesto</UI> (sin pasar del tope) y <UI>archivar</UI>. En <Link href="/anuncios/campanas" className="font-medium text-primary hover:underline">Campañas en Meta</Link> ves y administras lo que ya existe en la cuenta, también lo creado directamente en Meta: pausar, activar (si cabe en el tope) y cambiar el presupuesto diario.
             </Step>
           </Steps>
+          <Callout title="Cómo configurar el medio de pago en Meta (una sola vez)">
+            <p>
+              El dinero de los anuncios sale del medio de pago de la <UI>cuenta publicitaria</UI>, no de esta app (que nunca guarda datos de pago). Se configura en Meta. Si algún nombre no coincide con lo que ves, busca «Facturación» o «Configuración de pagos»: Meta cambia sus pantallas seguido.
+            </p>
+            <Steps>
+              <Step>
+                Entra al <Ext href="https://adsmanager.facebook.com">Administrador de anuncios</Ext> y elige arriba a la izquierda <UI>la cuenta publicitaria correcta</UI>. Necesitas ser <UI>administrador</UI> de esa cuenta (o tener rol de finanzas): quien solo es anunciante no puede cambiar medios de pago.
+              </Step>
+              <Step>
+                Abre <UI>Facturación y pagos</UI> (menú de la izquierda). Si no aparece: <Ext href="https://business.facebook.com/billing_hub">business.facebook.com/billing_hub</Ext>, o <UI>Configuración del negocio → Cuentas → Cuentas publicitarias</UI> → tu cuenta → <UI>Configuración de pagos</UI>.
+              </Step>
+              <Step>
+                Pulsa <UI>Agregar método de pago</UI>. El país y la moneda son los de la cuenta; <UI>la moneda no se puede cambiar después</UI> (si necesitas otra, hay que crear otra cuenta publicitaria). Elige tarjeta de crédito o débito (o PayPal u otras opciones si tu país las ofrece) y completa los datos.
+              </Step>
+              <Step>
+                Con tarjeta: pide a tu banco que permita <UI>compras en línea en el exterior</UI> (Meta cobra desde fuera del país y a veces en dólares); es la causa más común de pagos rechazados. Deja el método como <UI>principal</UI>.
+              </Step>
+              <Step>
+                Elige cómo se cobra: <UI>cobro automático</UI> (se carga a tu tarjeta al llegar a un umbral de gasto que Meta fija, o en la fecha mensual) o, donde existe, <UI>saldo prepagado</UI> (agregas dinero y los anuncios gastan de ahí). El prepago es lo que mejor limita el gasto máximo.
+              </Step>
+              <Step>
+                Como red de seguridad de Meta, independiente de esta app, fija el <UI>límite de gasto de la cuenta</UI> (<UI>Configuración de la cuenta publicitaria → Límite de gasto de la cuenta → Establecer</UI>), por ejemplo igual al tope mensual de la app. Los impuestos (como el IVA) los suma Meta aparte según tu país.
+              </Step>
+              <Step>
+                Vuelve a <Link href="/cuentas" className="font-medium text-primary hover:underline">Cuentas</Link> y pulsa <UI>Sincronizar</UI>: si la cuenta estaba «con pago pendiente», pasa a activa y ya se puede crear anuncios.
+              </Step>
+            </Steps>
+          </Callout>
           <div className="grid gap-4 text-sm leading-relaxed md:grid-cols-2">
             <div className="rounded-lg border border-border p-4">
               <p className="font-semibold">Quién puede qué</p>
@@ -546,6 +577,19 @@ export default async function ManualPage() {
               <p>
                 Para arreglar lo ya perdido, vuelve a subir la imagen en la publicación (en Publicaciones, <UI>Quitar imagen</UI> y subirla otra vez). Impulsar una publicación <em>ya publicada</em> no necesita la imagen: solo la usa «Anuncio nuevo». Para que no se repita,
                 pon <code>MEDIA_DIR</code> en un volumen persistente (en Easypanel: <UI>Mounts → Volume</UI> con la ruta <code>/data/media</code>) y usa una sola copia de la app contra cada base de datos. En «Tu estado ahora» verás cuántas imágenes faltan.
+              </p>
+            </Problem>
+            <Problem message="«Superaría el tope mensual de la cuenta…» (al activar un anuncio o subirle el presupuesto)">
+              <p>
+                El mensaje dice las tres partes: lo <UI>ya gastado</UI> este mes (lo que Meta reportó), lo que <UI>otros anuncios activos</UI> todavía pueden gastar y lo que gastaría <UI>este</UI>. Si la suma pasa del tope mensual, no se activa. Baja el presupuesto o la duración, pausa otro anuncio, o pídele al administrador que suba el tope mensual en Cuentas. Es una proyección del máximo: Meta puede gastar menos.
+              </p>
+              <p>
+                El gasto del mes sale del rendimiento descargado de Meta, que puede llevar unas horas de retraso; con anuncios activos la app lo vuelve a descargar cada hora.
+              </p>
+            </Problem>
+            <Problem message="«Se pausó automáticamente: el gasto de … llegó al tope mensual de la cuenta»">
+              <p>
+                Es el freno del tope mensual: el gasto del mes alcanzó el tope y la app pausó los anuncios activos que creó. Puedes volver a activarlos cuando haya cupo (al empezar el mes siguiente, o si el administrador sube el tope). Solo pausa lo creado desde la app: para lo que se active directamente en Meta usa el límite de gasto de la cuenta de Meta.
               </p>
             </Problem>
             <Problem message="«Esta cuenta publicitaria todavía no tiene un tope de gasto diario»">

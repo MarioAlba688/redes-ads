@@ -226,6 +226,7 @@ Además de **ver** el rendimiento, la sección **Anuncios** permite **crear y ad
 
 - **Todo nace en pausa.** Un anuncio no gasta nada hasta que alguien con permiso de **aprobar** lo activa. Quien lo crea (Editor) no puede activarlo; pausar sí puede cualquiera de los dos, porque pausar nunca gasta.
 - **Tope de gasto diario por cuenta.** El administrador lo fija en **Cuentas** (en la moneda de la cuenta). Sin tope no se crea ni se activa nada, y ningún presupuesto puede pasarlo. Al activar, la app vuelve a leer el presupuesto que Meta tiene *en ese momento* y lo compara con el tope.
+- **Tope mensual por cuenta (opcional).** Al activar, la app suma lo ya gastado en el mes (el rendimiento que descarga de Meta, que puede llevar unas horas de retraso: con anuncios activos lo actualiza cada hora), lo que otros anuncios activos todavía pueden gastar y lo que gastaría este, para cada mes que toque; si no cabe, no se activa. Lo mismo al subir el presupuesto de uno activo o activar una campaña que ya existía. Y es un **freno**: si el gasto del mes llega al tope, los anuncios activos creados desde la app se pausan solos, con una nota que lo explica. Lo que se active directamente en Meta no lo pausa la app: para eso sirve el *límite de gasto de la cuenta* de Meta.
 - **Se comprueba lo creado.** Tras crear, la app lee de Meta el presupuesto y el estado: si no coinciden con lo pedido (o algo no quedó en pausa) lo borra y avisa. Si la creación falla a medias, borra lo que alcanzó a crear.
 - **Dinero en la unidad de Meta.** Meta no recibe pesos o dólares sino la unidad mínima de cada moneda y su tabla no sigue los decimales «normales» (el peso colombiano **no tiene subunidad**: 50.000 COP se envía como 50000, mientras que 10 USD se envía como 1000). La app usa la tabla oficial de Meta y rechaza cualquier moneda que no esté en ella.
 
@@ -243,7 +244,9 @@ Además de **ver** el rendimiento, la sección **Anuncios** permite **crear y ad
 
 > La creación se probó con un Meta **simulado** que exige lo mismo que la v26 de Meta (por ejemplo `advantage_audience` explícito), **no con una cuenta real**. Si Meta rechaza alguna combinación, el error aparece tal cual («Detalle de Meta») y, como todo nace en pausa, no cuesta dinero. Todo lo que depende de cómo Meta nombra las cosas está en `src/lib/promotions/mapping.ts`.
 
-Necesita una tabla nueva (`AdPromotion`) y una columna (`SocialAccount.dailyBudgetCap`): migración `ad_promotions`, se aplica con `npm run db:deploy`.
+**De dónde sale el dinero:** del medio de pago de la cuenta publicitaria en Meta, no de la app (que nunca guarda datos de pago). El Manual (sección 8) trae el paso a paso para configurarlo: Administrador de anuncios → Facturación y pagos → agregar método de pago (la moneda de la cuenta no se puede cambiar después; con tarjeta, pide al banco que permita compras en línea en el exterior), elegir cobro automático o saldo prepagado y fijar el límite de gasto de la cuenta como red de seguridad de Meta. Meta puede sumar impuestos aparte según tu país.
+
+Necesita una tabla nueva (`AdPromotion`) y dos columnas (`SocialAccount.dailyBudgetCap` y `monthlyBudgetCap`): migraciones `ad_promotions` y `ad_monthly_cap`, se aplican con `npm run db:deploy`.
 
 ## Motores de IA (Claude, GPT y Gemini)
 

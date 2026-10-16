@@ -75,10 +75,12 @@ export async function syncAllAction(): Promise<FormState> {
 }
 
 /**
- * Fija (o quita) el tope de gasto diario por anuncio de una cuenta publicitaria de Meta, en la moneda de la cuenta.
- * Es el control principal del gasto: sin tope no se puede crear ni activar ningun anuncio desde la app.
+ * Fija (o quita) los topes de gasto de una cuenta publicitaria de Meta, en la moneda de la cuenta:
+ *  - diario por anuncio: el control principal; sin el no se crea ni se activa nada;
+ *  - mensual (opcional): suma lo gastado en el mes y lo comprometido; al llegar, los anuncios activos de la app se pausan.
+ * Un campo vacio quita ese tope.
  */
-export async function setDailyCapAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export async function setSpendCapsAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const auth = await authorize("accounts.manage");
   if (!auth.ok) return { error: auth.error };
 
@@ -86,35 +88,49 @@ export async function setDailyCapAction(_prev: FormState, formData: FormData): P
   if (!id.success) return { error: "Datos no válidos." };
   const account = await db.socialAccount.findUnique({
     where: { id: id.data },
-    select: { name: true, platform: true, kind: true, currency: true, dailyBudgetCap: true },
+    select: { name: true, platform: true, kind: true, currency: true, dailyBudgetCap: true, monthlyBudgetCap: true },
   });
   if (!account || account.platform !== "META" || account.kind !== "AD_ACCOUNT") return { error: "Esa cuenta publicitaria no existe." };
 
-  const raw = String(formData.get("cap") ?? "").trim();
-  const before = account.dailyBudgetCap === null ? null : Number(account.dailyBudgetCap);
-
-  if (raw === "") {
-    await db.socialAccount.update({ where: { id: id.data }, data: { dailyBudgetCap: null } });
-    await audit("ads.cap_cleared", { userId: auth.user.id, target: id.data, detail: { account: account.name, from: before } });
-    refresh();
-    return { success: "Se quitó el tope: no se podrán crear ni activar anuncios en esta cuenta hasta fijar uno." };
-  }
+  const rawDaily = String(formData.get("cap") ?? "").trim();
+  const rawMonthly = String(formData.get("monthlyCap") ?? "").trim();
+  const values = { cap: rawDaily, monthlyCap: rawMonthly };
+  const dailyBefore = account.dailyBudgetCap === null ? null : Number(account.dailyBudgetCap);
+  const monthlyBefore = account.monthlyBudgetCap === null ? null : Number(account.monthlyBudgetCap);
 
   const decimals = budgetDecimals(account.currency);
-  if (decimals === null) {
-    return { error: `La moneda de esta cuenta (${account.currency ?? "desconocida"}) no está en la tabla de Meta: no se puede fijar un tope con seguridad.`, values: { cap: raw } };
+  if ((rawDaily !== "" || rawMonthly !== "") && decimals === null) {
+    return { error: `La moneda de esta cuenta (${account.currency ?? "desconocida"}) no está en la tabla de Meta: no se puede fijar un tope con seguridad.`, values };
   }
-  const cap = parseBudgetInput(raw, account.currency);
-  if (cap === null) {
-    return {
-      error: `No entendí «${raw}». Escribe el monto en ${account.currency} ${decimals === 0 ? "sin decimales (por ejemplo 50000 o 50.000)" : "con hasta 2 decimales (por ejemplo 10,50)"}, mayor que 0.`,
-      values: { cap: raw },
-    };
+  const how = decimals === 0 ? "sin decimales (por ejemplo 50000 o 50.000)" : "con hasta 2 decimales (por ejemplo 10,50)";
+  const parse = (raw: string, label: string): { value: number | null } | { error: string } => {
+    if (raw === "") return { value: null };
+    const v = parseBudgetInput(raw, account.currency);
+    return v === null ? { error: `No entendí «${raw}» en el tope ${label}. Escribe el monto en ${account.currency} ${how}, mayor que 0.` } : { value: v };
+  };
+  const daily = parse(rawDaily, "diario");
+  if ("error" in daily) return { error: daily.error, values };
+  const monthly = parse(rawMonthly, "mensual");
+  if ("error" in monthly) return { error: monthly.error, values };
+  if (daily.value !== null && monthly.value !== null && monthly.value < daily.value) {
+    return { error: "El tope mensual no puede ser menor que el diario: un solo día ya lo pasaría.", values };
   }
-  await db.socialAccount.update({ where: { id: id.data }, data: { dailyBudgetCap: cap } });
-  await audit("ads.cap_set", { userId: auth.user.id, target: id.data, detail: { account: account.name, from: before, to: cap, currency: account.currency } });
+
+  if (daily.value === dailyBefore && monthly.value === monthlyBefore) return { success: "Sin cambios." };
+  await db.socialAccount.update({ where: { id: id.data }, data: { dailyBudgetCap: daily.value, monthlyBudgetCap: monthly.value } });
+
+  const money = (v: number) => formatMoney(v, account.currency ?? "");
+  const notes: string[] = [];
+  if (daily.value !== dailyBefore) {
+    await audit(daily.value === null ? "ads.cap_cleared" : "ads.cap_set", { userId: auth.user.id, target: id.data, detail: { account: account.name, from: dailyBefore, to: daily.value, currency: account.currency } });
+    notes.push(daily.value === null ? "Se quitó el tope diario: no se podrán crear ni activar anuncios en esta cuenta hasta fijar uno." : `Tope diario fijado en ${money(daily.value)} por día.`);
+  }
+  if (monthly.value !== monthlyBefore) {
+    await audit(monthly.value === null ? "ads.monthly_cap_cleared" : "ads.monthly_cap_set", { userId: auth.user.id, target: id.data, detail: { account: account.name, from: monthlyBefore, to: monthly.value, currency: account.currency } });
+    notes.push(monthly.value === null ? "Se quitó el tope mensual." : `Tope mensual fijado en ${money(monthly.value)}.`);
+  }
   refresh();
-  return { success: `Tope fijado en ${formatMoney(cap, account.currency ?? "")} por día.` };
+  return { success: notes.join(" ") };
 }
 
 export async function disconnectAccountAction(_prev: FormState, formData: FormData): Promise<FormState> {

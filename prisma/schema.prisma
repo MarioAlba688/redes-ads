@@ -143,6 +143,9 @@ model SocialAccount {
   // Cuentas publicitarias: tope de gasto diario por anuncio (en la moneda de la cuenta) que fija el administrador.
   // Sin tope no se puede crear ni activar anuncios desde la app.
   dailyBudgetCap  Decimal?         @db.Decimal(14, 2)
+  // Tope de gasto por mes calendario (opcional): al activar se suma lo gastado en el mes, lo comprometido en otros
+  // anuncios activos y lo que este puede gastar; y si el gasto del mes llega al tope, los anuncios activos se pausan.
+  monthlyBudgetCap Decimal?        @db.Decimal(14, 2)
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 

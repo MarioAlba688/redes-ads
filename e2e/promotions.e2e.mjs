@@ -218,7 +218,7 @@ try {
   // ------------------------------------------------------------ 1. el tope diario (Cuentas)
   await admin.goto(`${APP}/cuentas`);
   const capInput = (acc) => admin.locator(`#cap-${acc}`);
-  check("el administrador ve el tope de cada cuenta publicitaria, sin fijar", (await capInput(ACC_COP).count()) === 1 && (await capInput(ACC_USD).count()) === 1 && (await admin.getByText("Sin tope no se pueden crear ni activar anuncios").count()) === 2);
+  check("el administrador ve el tope de cada cuenta publicitaria, sin fijar", (await capInput(ACC_COP).count()) === 1 && (await capInput(ACC_USD).count()) === 1 && (await admin.getByText("Sin tope diario no se pueden crear ni activar anuncios").count()) === 2);
 
   // Sin tope no se puede crear nada (ni siquiera llega a Meta).
   await openBoost(edgar, FB);
@@ -245,7 +245,7 @@ try {
   check("«50.000» en dólares es ambiguo y se rechaza en vez de adivinar", (await capOf(ACC_USD)) === 10.5);
 
   await edgar.goto(`${APP}/cuentas`);
-  check("quien no es administrador ve el tope pero no puede cambiarlo", (await edgar.locator(`#cap-${ACC_COP}`).count()) === 0 && (await edgar.getByText(/Tope de gasto diario por anuncio/).first().isVisible()));
+  check("quien no es administrador ve el tope pero no puede cambiarlo", (await edgar.locator(`#cap-${ACC_COP}`).count()) === 0 && (await edgar.getByText(/Tope diario por anuncio/).first().isVisible()));
   const audits = (await db.sql("SELECT action FROM AuditLog WHERE action LIKE 'ads.cap%'")).map((r) => r.action);
   check("fijar el tope queda en la auditoría", audits.includes("ads.cap_set"));
 
@@ -570,6 +570,118 @@ try {
   await vera.goto(`${APP}/anuncios/campanas?cuenta=${ACC_COP}`);
   check("solo lectura ve las campañas pero ningún botón", (await vera.locator("table").getByText("Campaña externa").count()) === 1 && (await vera.locator("table button").count()) === 0);
 
+  // ------------------------------------------------------------ 9b. tope MENSUAL (gastado + comprometido + este anuncio) y freno automatico
+  // El worker descarga el rendimiento de la cuenta (cifras deterministas del Meta simulado): ese es el "gastado en el mes".
+  const bogotaToday = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const monthStart = `${bogotaToday.slice(0, 8)}01`;
+  const spentRow = async () => Number((await db.sql("SELECT COALESCE(SUM(spend),0) AS s FROM AdInsightDaily WHERE accountId=? AND date >= ? AND date <= ?", [ACC_COP, monthStart, bogotaToday]))[0].s);
+  check("el worker descargó el rendimiento de la cuenta (el gasto del mes)", await until(async () => (await spentRow()) > 0));
+  const S = await spentRow();
+  check("hay gasto de sobra este mes para probar los topes", S > 150_000, String(S));
+  check("antes de esta sección no hay ningún anuncio activo", Number((await db.sql("SELECT COUNT(*) c FROM AdPromotion WHERE status='ACTIVE'"))[0].c) === 0);
+
+  const monthlyInput = (acc) => admin.locator(`#capm-${acc}`);
+  const submitCaps = async (acc) => {
+    // Solo se pulsa: el aviso anterior sigue en pantalla hasta que llega el nuevo, asi que lo fiable es esperar el valor en la base.
+    await monthlyInput(acc).locator("xpath=ancestor::form").getByRole("button", { name: "Guardar" }).click();
+  };
+  const monthlyOf = async (acc) => {
+    const r = (await db.sql("SELECT monthlyBudgetCap FROM SocialAccount WHERE id=?", [acc]))[0].monthlyBudgetCap;
+    return r === null ? null : Number(r);
+  };
+
+  // En Cuentas: el tope mensual no puede ser menor que el diario (un dia ya lo pasaria)
+  await admin.goto(`${APP}/cuentas`);
+  check("Cuentas muestra el gasto del mes junto al tope", (await admin.getByText(/Este mes:/).count()) >= 1);
+  await monthlyInput(ACC_COP).fill("10.000");
+  await submitCaps(ACC_COP);
+  await admin.getByText(/no puede ser menor que el diario/).waitFor();
+  check("un tope mensual menor que el diario se rechaza", (await monthlyOf(ACC_COP)) === null);
+  const roomFor = (extra) => String(Math.ceil(S) + extra);
+  await monthlyInput(ACC_COP).fill(roomFor(100_000));
+  await submitCaps(ACC_COP);
+  await until(async () => (await monthlyOf(ACC_COP)) === Math.ceil(S) + 100_000);
+  check("el tope mensual se guarda (y queda en la auditoría)", (await monthlyOf(ACC_COP)) === Math.ceil(S) + 100_000 && (await db.sql("SELECT COUNT(*) c FROM AuditLog WHERE action='ads.monthly_cap_set'"))[0].c > 0n, String(await monthlyOf(ACC_COP)));
+
+  // Un anuncio de 20.000 x 7 dias (140.000) no cabe en los 100.000 que quedan del mes
+  await openBoost(edgar, FB, { name: "Mensual 1", budget: "20000", days: 7 });
+  await edgar.getByText(/Tope mensual de esta cuenta/).first().waitFor();
+  await submit(edgar);
+  const m1 = await waitCreated(edgar);
+  await aura.goto(`${APP}/anuncios/creados/${m1}`);
+  aura.once("dialog", (d) => d.accept());
+  await aura.getByRole("button", { name: "Activar anuncio" }).click();
+  const monthlyMsg = await aura.getByText(/Superaría el tope mensual de la cuenta/).first().innerText();
+  const m1Row = await promo(m1);
+  check("activar un anuncio que no cabe en lo que queda del mes se rechaza y explica las partes (gastado y este anuncio)", /ya se gastaron/.test(monthlyMsg) && /este anuncio puede gastar hasta/.test(monthlyMsg) && /Baja el presupuesto/.test(monthlyMsg), monthlyMsg);
+  check("y no se toca nada en Meta", m1Row.status === "PAUSED" && metaAds().campaigns.find((c) => c.id === m1Row.metaCampaignId).status === "PAUSED");
+
+  // Al subir el tope mensual, se activa
+  await db.sql("UPDATE SocialAccount SET monthlyBudgetCap=? WHERE id=?", [Math.ceil(S) + 1_000_000, ACC_COP]);
+  await aura.goto(`${APP}/anuncios/creados/${m1}`);
+  aura.once("dialog", (d) => d.accept());
+  await aura.getByRole("button", { name: "Activar anuncio" }).click();
+  check("con tope mensual suficiente, se activa", await until(async () => (await promo(m1)).status === "ACTIVE"));
+
+  // Lo comprometido por otros anuncios activos cuenta: el cupo alcanza para UNO mas de 20.000 x lo que queda del mes, no para dos
+  const daysLeft = (() => {
+    const [y, m, d] = bogotaToday.split("-").map(Number);
+    return new Date(Date.UTC(y, m, 0)).getUTCDate() - d + 1;
+  })();
+  const oneAd = 20_000 * Math.min(7, daysLeft);
+  await db.sql("UPDATE SocialAccount SET monthlyBudgetCap=? WHERE id=?", [Math.ceil(S) + oneAd + 1, ACC_COP]);
+  await openBoost(edgar, FB, { name: "Mensual 2", budget: "20000", days: 7 });
+  await submit(edgar);
+  const m2 = await waitCreated(edgar);
+  await aura.goto(`${APP}/anuncios/creados/${m2}`);
+  aura.once("dialog", (d) => d.accept());
+  await aura.getByRole("button", { name: "Activar anuncio" }).click();
+  const committedMsg = await aura.getByText(/Superaría el tope mensual de la cuenta/).first().innerText();
+  check("lo que ya tiene comprometido otro anuncio activo cuenta contra el tope mensual", /otros anuncios activos pueden gastar hasta/.test(committedMsg) && (await promo(m2)).status === "PAUSED", committedMsg);
+
+  // Subir el presupuesto de uno activo tambien se comprueba
+  await aura.goto(`${APP}/anuncios/creados/${m1}`);
+  await aura.locator("#nuevo-presupuesto").fill("50.000");
+  await aura.getByRole("button", { name: "Cambiar", exact: true }).click();
+  await aura.getByText(/Superaría el tope mensual de la cuenta/).first().waitFor();
+  check("subir el presupuesto de un anuncio activo por encima del cupo mensual se rechaza", Number((await promo(m1)).dailyBudget) === 20000);
+
+  // Lo ya existente en Meta tambien se comprueba contra el tope mensual
+  await db.sql("UPDATE SocialAccount SET monthlyBudgetCap=? WHERE id=?", [Math.ceil(S) + 50_000, ACC_COP]);
+  await aura.goto(`${APP}/anuncios/campanas?cuenta=${ACC_COP}`);
+  const extRow = aura.locator("table tr", { hasText: "Campaña externa" }).first();
+  aura.once("dialog", (d) => d.accept());
+  await extRow.getByRole("button", { name: "Activar" }).click();
+  await extRow.getByText(/Superaría el tope mensual de la cuenta/).waitFor();
+  check("activar una campaña existente que no cabe en el mes se rechaza", metaAds().campaigns.find((c) => c.id === external.campaign).status === "PAUSED");
+
+  // Freno automatico: si el gasto del mes llega al tope, se pausan los anuncios activos de la app
+  await db.sql("UPDATE SocialAccount SET monthlyBudgetCap=? WHERE id=?", [Math.max(Math.floor(S), 50_000), ACC_COP]);
+  check("al llegar el gasto del mes al tope mensual, el worker PAUSA los anuncios activos de la app", await until(async () => (await promo(m1)).status === "PAUSED", 30_000));
+  const braked = await promo(m1);
+  check("y los deja pausados también en Meta", metaAds().campaigns.find((c) => c.id === braked.metaCampaignId).status === "PAUSED" && metaAds().ads.find((x) => x.id === braked.metaAdId).status === "PAUSED");
+  check("con una nota que explica por qué, y queda en la auditoría", /Se pausó automáticamente: el gasto de .* llegó al tope mensual/.test(braked.error ?? "") && (await db.sql("SELECT COUNT(*) c FROM AuditLog WHERE action='ads.paused_by_cap'"))[0].c > 0n, String(braked.error));
+  await aura.goto(`${APP}/anuncios/creados/${m1}`);
+  check("la ficha muestra esa nota", (await aura.getByText(/Se pausó automáticamente/).count()) === 1);
+  aura.once("dialog", (d) => d.accept());
+  await aura.getByRole("button", { name: "Activar anuncio" }).click();
+  await aura.getByText(/Superaría el tope mensual de la cuenta/).first().waitFor();
+  check("y con el tope alcanzado no se puede volver a activar", (await promo(m1)).status === "PAUSED");
+
+  // Quitar el tope mensual lo deja sin limite mensual (queda solo el diario)
+  await admin.goto(`${APP}/cuentas`);
+  await monthlyInput(ACC_COP).fill("");
+  await submitCaps(ACC_COP);
+  await until(async () => (await monthlyOf(ACC_COP)) === null);
+  check("quitar el tope mensual lo deja sin tope (queda el diario)", (await monthlyOf(ACC_COP)) === null && (await capOf(ACC_COP)) === 50000);
+  await aura.goto(`${APP}/anuncios/creados/${m2}`);
+  aura.once("dialog", (d) => d.accept());
+  await aura.getByRole("button", { name: "Activar anuncio" }).click();
+  check("sin tope mensual se activa con solo el tope diario", await until(async () => (await promo(m2)).status === "ACTIVE"));
+  await aura.goto(`${APP}/anuncios/creados/${m2}`);
+  await aura.getByRole("button", { name: "Pausar", exact: true }).click();
+  check("y se deja en pausa para no arrastrar gasto a lo que sigue", await until(async () => (await promo(m2)).status === "PAUSED"));
+
   // ------------------------------------------------------------ 10. permisos, listas y diseño
   await vera.goto(`${APP}/anuncios/nuevo`);
   check("solo lectura no entra a crear anuncios", !vera.url().includes("/anuncios/nuevo"));
@@ -601,6 +713,8 @@ try {
   // El Manual explica los anuncios y su estado ahora lo refleja
   await admin.goto(`${APP}/manual`);
   check("el Manual explica los anuncios y está en su índice", (await admin.locator("#anuncios").getByRole("heading", { name: "8. Anuncios: crear, activar y controlar el gasto" }).count()) === 1 && (await admin.locator('nav[aria-label="En esta guía"] a[href="#anuncios"]').count()) === 1);
+  const anunciosText = await admin.locator("#anuncios").innerText();
+  check("el Manual explica cómo configurar el medio de pago y el tope mensual", /Cómo configurar el medio de pago en Meta/.test(anunciosText) && /Facturación y pagos/.test(anunciosText) && /límite de gasto de la cuenta/.test(anunciosText) && /tope mensual/.test(anunciosText));
   check("«Tu estado ahora» confirma que se pueden crear anuncios cuando hay permiso y tope", (await admin.getByText("Se pueden crear anuncios").count()) === 1);
   check("la línea recomendada de META_SCOPES incluye ads_management", (await admin.getByText(/META_SCOPES="ads_read,ads_management,/).count()) >= 1);
   check("«Tu estado ahora» avisa que hay imágenes registradas cuyo archivo no está en este servidor", (await admin.getByText(/imágenes registradas no están en la carpeta de este servidor/).count()) === 1);

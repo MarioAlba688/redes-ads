@@ -14,7 +14,7 @@ export type ExistingObjects = { campaigns: Campaign[]; adSets: AdSet[]; ads: Ad[
 const isGone = (status: string | null | undefined) => status === "DELETED" || status === "ARCHIVED";
 
 /** Gasto diario maximo que puede generar activar ese objeto, en unidades minimas, o un motivo por el que no se puede calcular. */
-function dailyExposure(objects: ExistingObjects, level: ExistingLevel, id: string): { minor: number } | { reason: string } {
+export function dailyExposure(objects: ExistingObjects, level: ExistingLevel, id: string): { minor: number } | { reason: string } {
   const campaign = (cid: string | null) => objects.campaigns.find((c) => c.id === cid);
   const adSetsOf = (cid: string) => objects.adSets.filter((s) => s.campaignId === cid && !isGone(s.status));
 

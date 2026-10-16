@@ -8,6 +8,7 @@ import { googleConfig } from "@/lib/google/config";
 import { metaConfig } from "@/lib/meta/config";
 import { missingAdsWriteScope, missingPublishScope } from "@/lib/meta/scopes";
 import { can } from "@/lib/permissions";
+import { monthSpendByAccount } from "@/lib/promotions/spend";
 import {
   ACCOUNT_KIND_LABELS,
   CONNECTION_STATUS_LABELS,
@@ -18,7 +19,7 @@ import {
 } from "@/lib/platforms";
 import { tiktokConfig } from "@/lib/tiktok/config";
 import { AccountRowActions, SyncAllButton } from "./account-controls";
-import { DailyCapForm } from "./daily-cap-form";
+import { SpendCapsForm } from "./spend-caps-form";
 
 export const metadata: Metadata = { title: "Cuentas" };
 
@@ -178,11 +179,16 @@ export default async function AccountsPage({ searchParams }: PageProps<"/cuentas
       lastError: true,
       scopes: true, // permisos concedidos por Meta (no es un secreto): sirve para avisar si falta el de publicar
       dailyBudgetCap: true, // tope de gasto diario por anuncio (cuentas publicitarias de Meta)
+      monthlyBudgetCap: true, // tope de gasto mensual (opcional)
+      timezone: true,
     },
     orderBy: [{ platform: "asc" }, { kind: "asc" }, { name: "asc" }],
   });
 
   const canManage = can(user.role, "accounts.manage");
+  // Gastado este mes en cada cuenta publicitaria de Meta (para mostrarlo junto a su tope mensual).
+  const metaAds = accounts.filter((a) => a.platform === "META" && a.kind === "AD_ACCOUNT" && a.status !== "REVOKED");
+  const monthSpent = await monthSpendByAccount(metaAds);
   // Por plataforma: a donde manda el boton de conectar, si el servidor tiene las credenciales y que variables faltan.
   const CONNECT: Partial<Record<PlatformId, { href: string; ready: boolean; vars: [string, string]; where: string }>> = {
     META: { href: "/api/meta/connect", ready: metaConfig() !== null, vars: ["META_APP_ID", "META_APP_SECRET"], where: "Meta for Developers" },
@@ -291,7 +297,14 @@ export default async function AccountsPage({ searchParams }: PageProps<"/cuentas
                           {[a.handle, a.currency].filter(Boolean).join(" · ") || PLATFORM_NAMES[a.platform]}
                         </p>
                         {a.platform === "META" && a.kind === "AD_ACCOUNT" && a.status !== "REVOKED" && (
-                          <DailyCapForm accountId={a.id} currency={a.currency} cap={a.dailyBudgetCap === null ? null : Number(a.dailyBudgetCap)} canEdit={canManage} />
+                          <SpendCapsForm
+                            accountId={a.id}
+                            currency={a.currency}
+                            cap={a.dailyBudgetCap === null ? null : Number(a.dailyBudgetCap)}
+                            monthlyCap={a.monthlyBudgetCap === null ? null : Number(a.monthlyBudgetCap)}
+                            spent={monthSpent.get(a.id) ?? 0}
+                            canEdit={canManage}
+                          />
                         )}
                       </td>
                       <td className="px-5 py-3">

@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { dateTimeFormat } from "@/lib/display-time";
 import { missingAdsWriteScope } from "@/lib/meta/scopes";
 import { budgetDecimals } from "@/lib/promotions/currency";
+import { monthSpendByAccount } from "@/lib/promotions/spend";
 import { POST_STATUS_LABELS, type PostStatusName } from "@/lib/posts";
 import { PromotionForm, type AccountOption, type BoostOption, type PageOption, type PostOption } from "../promotion-form";
 
@@ -36,7 +37,7 @@ export default async function NewPromotionPage({ searchParams }: PageProps<"/anu
   const [adAccounts, pageAccounts, targets, posts] = await Promise.all([
     db.socialAccount.findMany({
       where: { platform: "META", kind: "AD_ACCOUNT", status: { not: "REVOKED" } },
-      select: { id: true, name: true, currency: true, dailyBudgetCap: true, brandId: true, status: true, scopes: true, metadata: true },
+      select: { id: true, name: true, currency: true, dailyBudgetCap: true, monthlyBudgetCap: true, timezone: true, brandId: true, status: true, scopes: true, metadata: true },
       orderBy: { name: "asc" },
     }),
     db.socialAccount.findMany({
@@ -62,11 +63,14 @@ export default async function NewPromotionPage({ searchParams }: PageProps<"/anu
       : Promise.resolve([]),
   ]);
 
+  const monthSpent = await monthSpendByAccount(adAccounts);
   const accounts: AccountOption[] = adAccounts.map((a) => ({
     id: a.id,
     name: a.name,
     currency: a.currency,
     cap: a.dailyBudgetCap === null ? null : Number(a.dailyBudgetCap),
+    monthlyCap: a.monthlyBudgetCap === null ? null : Number(a.monthlyBudgetCap),
+    spentThisMonth: monthSpent.get(a.id) ?? 0,
     brandId: a.brandId,
     blocked: blockedReason(a),
   }));

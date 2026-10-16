@@ -2,8 +2,9 @@ import "server-only";
 import { audit } from "@/lib/audit";
 import * as meta from "@/lib/meta/marketing";
 import { toMinorUnits } from "@/lib/promotions/currency";
-import { activationCapError, budgetHolder, type ExistingLevel } from "@/lib/promotions/existing";
-import { failureMessage, loadAdAccount, type LoadedAccount, type Result } from "@/lib/promotions/service";
+import { fromMinorUnits } from "@/lib/promotions/currency";
+import { activationCapError, budgetHolder, dailyExposure, type ExistingLevel } from "@/lib/promotions/existing";
+import { failureMessage, loadAdAccount, monthlyCapProblem, type LoadedAccount, type Result } from "@/lib/promotions/service";
 
 // Administrar lo que YA existe en una cuenta publicitaria (lo creado en Meta o en la app): ver, pausar, activar y
 // cambiar el presupuesto diario. Las mismas protecciones que al crear: nada se activa por encima del tope. Quien llama
@@ -46,6 +47,13 @@ export async function setExistingStatus(
   if (status === "ACTIVE") {
     const problem = activationCapError(objects, level, objectId, { currency: account.currency, cap: account.cap });
     if (problem) return fail(problem);
+    // Tope mensual: lo ya existente no tiene fin conocido, asi que se cuenta hasta fin de mes.
+    const exposure = dailyExposure(objects, level, objectId);
+    const daily = "minor" in exposure ? fromMinorUnits(exposure.minor, account.currency) : null;
+    if (daily !== null && daily > 0) {
+      const monthly = await monthlyCapProblem(account, { dailyBudget: daily, days: "month" });
+      if (monthly) return fail(monthly);
+    }
   }
   try {
     await meta.setStatus(account.auth.token, objectId, status);

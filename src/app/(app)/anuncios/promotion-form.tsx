@@ -21,7 +21,17 @@ import { maxTotalSpend, validatePromotion } from "@/lib/promotions/validate";
 import { createPromotionAction } from "./actions";
 import { TargetingPicker } from "./targeting-picker";
 
-export type AccountOption = { id: string; name: string; currency: string | null; cap: number | null; brandId: string | null; blocked: string | null };
+export type AccountOption = {
+  id: string;
+  name: string;
+  currency: string | null;
+  cap: number | null;
+  /** Tope de gasto por mes (null = sin tope mensual) y lo gastado en el mes en curso. */
+  monthlyCap: number | null;
+  spentThisMonth: number;
+  brandId: string | null;
+  blocked: string | null;
+};
 export type BoostOption = { targetId: string; label: string; brandId: string };
 export type PostOption = { id: string; label: string; text: string; brandId: string; hasImage: boolean };
 export type PageOption = { id: string; name: string; brandId: string };
@@ -246,6 +256,11 @@ export function PromotionForm({
             <Input id="dias" type="number" min={MIN_DURATION_DAYS} max={MAX_DURATION_DAYS} value={days} onChange={(e) => setDays(Number(e.target.value))} disabled={pending} />
           </Field>
         </div>
+        {account?.monthlyCap != null && (
+          <p className="text-sm text-muted">
+            Tope mensual de esta cuenta: <strong className="text-foreground">{formatMoney(account.monthlyCap, currency ?? "")}</strong> · gastado este mes: {formatMoney(account.spentThisMonth, currency ?? "")}. Al activar, la app comprueba que este anuncio quepa en lo que queda del mes.
+          </p>
+        )}
         {account && account.cap === null && <Alert tone="warning">Esta cuenta todavía no tiene un tope de gasto diario. Pídele al administrador que lo fije en Cuentas: sin él no se puede crear el anuncio.</Alert>}
         {total !== null && budget !== null && (
           <p className="text-sm">
