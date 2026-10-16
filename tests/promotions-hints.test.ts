@@ -27,6 +27,40 @@ describe("classifyAdsError: el mensaje real de Meta en español sobre el presupu
   });
 });
 
+describe("classifyAdsError: la app de Meta en modo de desarrollo (error real, 2026-10-16)", () => {
+  const real = new MetaApiError({
+    message: "La publicación con contenido publicitario se creó con una app que se encuentra en modo de desarrollo. Debe estar en modo público para crear este anuncio.",
+    code: 100,
+    subcode: 1885183,
+    status: 400,
+  });
+
+  it("lo explica en español, dice dónde se cambia y conserva el detalle de Meta", () => {
+    const f = classifyAdsError(real);
+    expect(f.message).toMatch(/modo de desarrollo/);
+    expect(f.message).toMatch(/«Publicar»/);
+    expect(f.message).toContain("Detalle de Meta");
+    expect(f.expired).toBe(false);
+    expect(f.retryable).toBe(false);
+  });
+
+  it("se reconoce por el subcódigo aunque Meta lo diga en otro idioma, y por el texto si falta el subcódigo", () => {
+    expect(classifyAdsError(new MetaApiError({ message: "Ad creative post was created by an app that is in development mode.", code: 100, subcode: 1885183, status: 400 })).message).toMatch(/modo de desarrollo/);
+    expect(classifyAdsError(new MetaApiError({ message: "The app is in development mode", code: 100, status: 400 })).message).toMatch(/modo de desarrollo/);
+  });
+
+  it("no confunde otros errores 100 con este", () => {
+    expect(classifyAdsError(new MetaApiError({ message: "(#100) Invalid parameter", code: 100, status: 400 })).message).not.toMatch(/modo de desarrollo/);
+  });
+
+  it("failureHints manda a publicar la app y a crear de nuevo", () => {
+    const h = failureHints(classifyAdsError(real).message, { dailyCap: 4000, currency: "COP" });
+    expect(h).toHaveLength(1);
+    expect(h[0]).toMatch(/modo Publicado/);
+    expect(h[0]).toMatch(/Crear de nuevo/);
+  });
+});
+
 describe("failureHints", () => {
   it("imagen perdida: manda a restaurarla", () => {
     const h = failureHints("No se encontró el archivo de la imagen en el servidor.", ctx);

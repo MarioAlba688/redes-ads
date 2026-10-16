@@ -23,6 +23,9 @@ export function failureHints(error: string | null | undefined, ctx: FailureConte
         : "Sube el presupuesto diario por encima del mínimo que dice Meta (y pídele al administrador que fije el tope diario de la cuenta en Cuentas).",
     );
   }
+  if (/modo de desarrollo/i.test(error)) {
+    hints.push("Pasa tu app de Meta a modo Publicado (Live) en developers.facebook.com (Manual, sección 8, paso «La app de Meta en modo Publicado») y luego pulsa «Crear de nuevo». Si Meta sigue rechazándolo, pulsa «Reconectar Meta» en Cuentas.");
+  }
   if (/método de pago/i.test(error)) hints.push("Agrega o corrige el método de pago de la cuenta publicitaria en Meta (Manual, sección 8) y vuelve a intentarlo.");
   if (/términos/i.test(error)) hints.push("Acepta los términos pendientes de la cuenta publicitaria en el Administrador de anuncios de Meta y vuelve a intentarlo.");
   if (/venció|revocada/i.test(error)) hints.push("Reconecta Meta en Cuentas antes de volver a intentarlo.");

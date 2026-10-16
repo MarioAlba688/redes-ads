@@ -29,6 +29,14 @@ export function classifyAdsError(e: unknown): AdsFailure {
   if (e.status >= 500 || e.code === 1 || e.code === 2) {
     return { message: "Meta tuvo un problema temporal. Intenta de nuevo en unos minutos.", expired: false, retryable: true };
   }
+  // Subcódigo 1885183 (error real visto con la cuenta del usuario, 2026-10-16): Meta no deja crear anuncios con una app en modo «Desarrollo».
+  if (e.subcode === 1885183 || /modo (de )?desarrollo|development mode/i.test(e.message)) {
+    return {
+      message: `Tu app de Meta está en modo de desarrollo y Meta solo deja crear anuncios con una app en modo Publicado (público). Publícala en developers.facebook.com → tu app → «Publicar» en el menú de la izquierda (hace falta la URL de la política de privacidad, la de eliminación de datos, el ícono y la categoría) y vuelve a intentarlo.${detail(e)}`,
+      expired: false,
+      retryable: false,
+    };
+  }
   if (e.isPermissionError) {
     return {
       message: `Meta rechazó la operación por falta de permisos. La app necesita ads_management, y tu usuario debe tener acceso a la cuenta publicitaria y a la página (como administrador o anunciante en el portafolio comercial).${detail(e)}`,

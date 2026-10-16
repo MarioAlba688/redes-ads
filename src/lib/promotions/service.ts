@@ -500,7 +500,7 @@ async function rollbackToPaused(token: string, ids: string[]): Promise<string[]>
 }
 
 /** Pausa el anuncio (anuncio, conjunto y campaña). Pausar nunca gasta: puede hacerlo quien lo crea y quien lo aprueba. */
-export async function pausePromotion(actorId: string | null, id: string, now = new Date()): Promise<Result> {
+export async function pausePromotion(actorId: string | null, id: string, now = new Date(), note?: string): Promise<Result> {
   const loaded = await loadPromotion(id);
   if (!loaded.ok) return loaded;
   const { row, account } = loaded;
@@ -509,7 +509,8 @@ export async function pausePromotion(actorId: string | null, id: string, now = n
   try {
     const left = await rollbackToPaused(token, [row.metaCampaignId, row.metaAdSetId, row.metaAdId].filter((x): x is string => !!x));
     if (left.length) return fail("No se pudo pausar todo en Meta. Inténtalo de nuevo (si insiste, pausa el anuncio directamente en Meta).");
-    await db.adPromotion.update({ where: { id }, data: { status: "PAUSED", lastSyncedAt: now } });
+    // La nota (por ejemplo la del freno mensual) va en la misma escritura que el estado: nunca queda pausado sin explicación.
+    await db.adPromotion.update({ where: { id }, data: { status: "PAUSED", lastSyncedAt: now, ...(note ? { error: note } : {}) } });
     await audit("ads.paused", { userId: actorId, target: id, detail: { name: row.name } });
     return { ok: true };
   } catch (e) {
@@ -659,10 +660,9 @@ export async function enforceMonthlyCaps(now = new Date()): Promise<number> {
       const note = `Se pausó automáticamente: el gasto de ${monthLabel(today.slice(0, 7))} (${money(spent.spent)}) llegó al tope mensual de la cuenta (${money(cap)}).`;
       const active = await db.adPromotion.findMany({ where: { adAccountId: a.id, status: "ACTIVE" }, select: { id: true, name: true } });
       for (const p of active) {
-        const r = await pausePromotion(null, p.id, now);
+        const r = await pausePromotion(null, p.id, now, note);
         if (!r.ok) continue;
         paused++;
-        await db.adPromotion.update({ where: { id: p.id }, data: { error: note } });
         await audit("ads.paused_by_cap", { target: p.id, detail: { name: p.name, account: a.name, spent: spent.spent, cap } });
       }
     }

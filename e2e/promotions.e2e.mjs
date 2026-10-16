@@ -479,6 +479,17 @@ try {
   const permMsg = await formError(edgar);
   check("sin permiso de Meta: nombra ads_management y trae el detalle de Meta", /ads_management/.test(permMsg) && /Detalle de Meta/.test(permMsg), permMsg);
 
+  fake.setScenario({ adsFail: { creative: "devmode" } });
+  await openBoost(edgar, FB, { name: "App en desarrollo" });
+  await submit(edgar);
+  const devMsg = await formError(edgar);
+  check("app de Meta en modo desarrollo: lo explica en español y dice dónde cambiarlo", /modo de desarrollo/.test(devMsg) && /«Publicar»/.test(devMsg) && /Detalle de Meta/.test(devMsg), devMsg);
+  check("y no deja nada creado en Meta (campaña y conjunto borrados)", metaAds().campaigns.filter((c) => c.name === "App en desarrollo").every((c) => c.status === "DELETED") && metaAds().adsets.filter((s) => s.name === "App en desarrollo").every((s) => s.status === "DELETED"));
+  const devRow = (await db.sql("SELECT id, status FROM AdPromotion WHERE name='App en desarrollo'"))[0];
+  await edgar.goto(`${APP}/anuncios/creados/${devRow.id}`);
+  check("la ficha del fallido manda a publicar la app de Meta y a crear de nuevo", devRow.status === "FAILED" && (await edgar.getByText(/modo Publicado/).count()) >= 1 && (await edgar.getByRole("link", { name: "Crear de nuevo con estos datos" }).count()) === 1);
+  calm();
+
   fake.setScenario({ adsMinBudget: 30000, adsFail: {} });
   await openBoost(edgar, FB, { name: "Presupuesto bajo", budget: "20000" });
   await submit(edgar);
@@ -770,6 +781,8 @@ try {
   // Freno automatico: si el gasto del mes llega al tope, se pausan los anuncios activos de la app
   await db.sql("UPDATE SocialAccount SET monthlyBudgetCap=? WHERE id=?", [Math.max(Math.floor(S), 50_000), ACC_COP]);
   check("al llegar el gasto del mes al tope mensual, el worker PAUSA los anuncios activos de la app", await until(async () => (await promo(m1)).status === "PAUSED", 30_000));
+  // El registro de auditoría se escribe justo después de pausar: se espera a que esté antes de comprobarlo.
+  await until(async () => (await db.sql("SELECT COUNT(*) c FROM AuditLog WHERE action='ads.paused_by_cap'"))[0].c > BigInt(0));
   const braked = await promo(m1);
   check("y los deja pausados también en Meta", metaAds().campaigns.find((c) => c.id === braked.metaCampaignId).status === "PAUSED" && metaAds().ads.find((x) => x.id === braked.metaAdId).status === "PAUSED");
   check("con una nota que explica por qué, y queda en la auditoría", /Se pausó automáticamente: el gasto de .* llegó al tope mensual/.test(braked.error ?? "") && (await db.sql("SELECT COUNT(*) c FROM AuditLog WHERE action='ads.paused_by_cap'"))[0].c > 0n, String(braked.error));

@@ -418,7 +418,11 @@ export default async function ManualPage() {
           <Steps>
             <Step>
               <UI>Permiso en Meta.</UI> Crear y administrar anuncios necesita <code>ads_management</code> (ver anuncios solo pide <code>ads_read</code>). En tu app de Meta, caso de uso de la <UI>API de marketing</UI>, comprueba en <UI>Permisos y funciones</UI> que aparece, agrégalo a{" "}
-              <code>META_SCOPES</code> (paso 3), reinicia y pulsa <UI>Reconectar Meta</UI>. Mientras la app esté en modo desarrollo funciona con tu usuario y tus cuentas; para usarla con cuentas de otras empresas Meta pide revisión.
+              <code>META_SCOPES</code> (paso 3), reinicia y pulsa <UI>Reconectar Meta</UI>. Para usarla con cuentas de otras empresas Meta pide además revisión.
+            </Step>
+            <Step>
+              <UI>La app de Meta en modo «Publicado».</UI> Meta <strong>no deja crear anuncios con una app en modo Desarrollo</strong> (el error dice «La publicación con contenido publicitario se creó con una app que se encuentra en modo de desarrollo», código 1885183). En{" "}
+              <Ext href="https://developers.facebook.com/apps">developers.facebook.com/apps</Ext> abre tu app y entra a <UI>Publicar</UI> en el menú de la izquierda (en el panel nuevo aparece con la etiqueta «Sin publicar»; en paneles antiguos es el interruptor <UI>Modo de la app</UI> de la barra superior). Esa pantalla lista lo que falta: se completa en <UI>Configuración de la app → Básica</UI> (ícono, categoría, correo de contacto, <UI>URL de la política de privacidad</UI>, <UI>URL de instrucciones para eliminar datos</UI> y, si te la piden, la de condiciones del servicio). Cuando no falte nada, vuelve a <UI>Publicar</UI>, revisa los casos de uso y pulsa el botón <UI>Publicar</UI> de abajo a la derecha. «Acciones requeridas» no es esta pantalla: ahí solo salen problemas pendientes. Publicar la app no la abre a nadie por sí solo: sigues usándola con tus permisos y tus cuentas, y la revisión de Meta solo hace falta para usarla con cuentas de otras empresas.
             </Step>
             <Step>
               <UI>La cuenta publicitaria lista en Meta.</UI> Tiene que tener un <UI>método de pago</UI> válido y los términos aceptados (<Ext href="https://adsmanager.facebook.com">Administrador de anuncios</Ext>). Tu usuario debe tener acceso a la cuenta (administrador o anunciante) y la <UI>página</UI> de la marca tiene que estar asignada a esa cuenta publicitaria en el portafolio (
@@ -600,6 +604,14 @@ export default async function ManualPage() {
             <Problem message="«Meta rechazó la operación por falta de permisos… ads_management» (al crear o activar un anuncio)">
               <p>
                 La conexión no incluye <code>ads_management</code>, o tu usuario no tiene acceso a la cuenta publicitaria o a la página. Sigue el paso 1 y 2 de la sección 8, reconecta y vuelve a intentarlo. Si la cuenta es de un portafolio comercial, tu usuario necesita rol de administrador o anunciante en esa cuenta.
+              </p>
+            </Problem>
+            <Problem message="«La publicación con contenido publicitario se creó con una app que se encuentra en modo de desarrollo» (al crear un anuncio)">
+              <p>
+                Tu app de Meta sigue en modo <UI>Desarrollo</UI> y Meta solo deja crear anuncios con una app en modo <UI>Publicado</UI>. Se arregla en Meta, no en la app: sigue el paso «La app de Meta en modo Publicado» de la sección 8 (opción <UI>Publicar</UI> en el menú de tu app en developers.facebook.com; piden la URL de la política de privacidad, la de eliminación de datos, el ícono y la categoría). Luego abre el anuncio que quedó en «No se pudo crear» y pulsa <UI>Crear de nuevo</UI>; no se gastó nada. Si Meta sigue rechazándolo, pulsa <UI>Reconectar Meta</UI> en Cuentas.
+              </p>
+              <p>
+                Ojo con <UI>Impulsar una publicación</UI>: si esa publicación salió con la app todavía en modo Desarrollo, Meta solo la muestra a quienes tienen un rol en la app y puede rechazar el impulso con este mismo error. En ese caso publica una nueva con la app ya en modo Publicado.
               </p>
             </Problem>
             <Problem message="«La cuenta publicitaria no tiene un método de pago válido» / «Hay términos de la cuenta publicitaria sin aceptar»">

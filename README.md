@@ -239,7 +239,7 @@ Además de **ver** el rendimiento, la sección **Anuncios** permite **crear y ad
 
 **Quién puede qué:** Editor crea y pausa · Aprobador activa, cambia presupuestos y archiva · Administrador todo y fija los topes · Solo lectura ve.
 
-**Requisitos en Meta** (los pasos están en el Manual, sección 8): permiso `ads_management` en tu app (agrégalo a `META_SCOPES` y pulsa *Reconectar Meta*), cuenta publicitaria con método de pago y términos aceptados, tu usuario con acceso a la cuenta y a la página, y la página asignada a esa cuenta publicitaria en el portafolio comercial.
+**Requisitos en Meta** (los pasos están en el Manual, sección 8): permiso `ads_management` en tu app (agrégalo a `META_SCOPES` y pulsa *Reconectar Meta*), **la app de Meta en modo «Publicado»** (en modo Desarrollo Meta rechaza crear anuncios con el error 1885183; en el panel nuevo está en «Publicar», en el menú de la izquierda; piden URL de política de privacidad, URL de eliminación de datos, ícono y categoría), cuenta publicitaria con método de pago y términos aceptados, tu usuario con acceso a la cuenta y a la página, y la página asignada a esa cuenta publicitaria en el portafolio comercial.
 
 **No incluye (todavía):** anuncios de empleo, vivienda, crédito o temas sociales y políticos, públicos en la Unión Europea (Meta exige datos DSA), objetivos de ventas o clientes potenciales (necesitan píxel o formularios), video ni carruseles.
 

@@ -35,6 +35,8 @@ const FAILURES = {
   server: (fail) => fail(500, 2, "An unexpected error has occurred. Please retry your request later."),
   payment: (fail) => fail(400, 100, "(#100) Invalid parameter: The ad account does not have a valid payment method", { error_subcode: 1359188 }),
   invalid: (fail) => fail(400, 100, "(#100) Invalid parameter"),
+  // Texto literal de Meta (en español) cuando la app esta en modo «Desarrollo»; subcodigo 1885183.
+  devmode: (fail) => fail(400, 100, "La publicación con contenido publicitario se creó con una app que se encuentra en modo de desarrollo. Debe estar en modo público para crear este anuncio.", { error_subcode: 1885183 }),
 };
 
 const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
