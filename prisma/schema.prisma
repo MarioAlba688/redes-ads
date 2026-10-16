@@ -271,9 +271,33 @@ model PostTarget {
   externalUrl   String?       @db.VarChar(500)
   publishedAt   DateTime?
   error         String?       @db.Text
+  // Ultima lectura de las estadisticas de lo publicado (ver PostTargetMetrics).
+  metrics       PostTargetMetrics?
 
   @@unique([postId, accountId])
   @@index([status, nextAttemptAt])
+}
+
+// Estadisticas de una publicacion ya publicada en un destino (Facebook o Instagram): la ultima lectura.
+// El proceso en segundo plano las vuelve a leer a medida que la publicacion envejece (ver src/lib/stats).
+model PostTargetMetrics {
+  id          String     @id @default(cuid())
+  targetId    String     @unique
+  target      PostTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  // null = la red no entrego esa cifra (no es lo mismo que 0).
+  views       Int? // vistas o reproducciones
+  reach       Int? // personas distintas que la vieron
+  likes       Int? // reacciones (Facebook) o "me gusta" (Instagram)
+  comments    Int?
+  shares      Int?
+  saves       Int? // solo Instagram
+  fetchedAt   DateTime // ultima lectura (UTC)
+  // Cuando volver a leerla; null = ya no se lee sola (muy antigua, o ya no existe en la red social).
+  nextFetchAt DateTime?
+  // Lo que no se pudo leer (falta un permiso, Meta retiro una metrica...). Las cifras que si llegaron se conservan.
+  note        String?    @db.Text
+
+  @@index([nextFetchAt])
 }
 
 // Imagen adjunta a una publicacion. El archivo vive en disco (storageKey); aqui solo sus datos.

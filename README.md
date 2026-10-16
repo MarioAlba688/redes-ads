@@ -15,6 +15,7 @@ Aplicación web para manejar en un solo lugar las cuentas publicitarias y las re
 - **Anuncios:** gasto, impresiones, clics, CTR, CPC y CPM por cuenta y campaña, con gráfica diaria, comparación con el periodo anterior y filtros de 7/30/90 días, por plataforma y por cuenta. Junta **Meta, Google Ads y TikTok Ads** (las monedas distintas nunca se suman; dentro de cada moneda hay un desglose por plataforma).
 - **Google Ads y TikTok Ads:** conexión por OAuth y descarga del rendimiento de las campañas, igual que Meta. Ver [Conectar Google Ads](#conectar-google-ads) y [Conectar TikTok Ads](#conectar-tiktok-ads).
 - Pantalla **Cuentas** con el estado de cada conexión, cuándo vence y botones de sincronizar y desconectar.
+- **Estadísticas** de lo que publicas: vistas, alcance, reacciones, comentarios, compartidos y guardados de cada publicación de Facebook e Instagram, con resumen, gráfico de las mejores, comparación por red y por marca, filtros de periodo y orden, y botón **Actualizar**. Las lee solo el proceso en segundo plano (cada 3 horas los primeros 2 días, luego cada 12 horas y después a diario hasta los 90 días). Ver [Estadísticas de las publicaciones](#estadísticas-de-las-publicaciones).
 - **Manual** (menú lateral, para todos los roles): la guía de Facebook e Instagram dentro de la app, paso a paso, con la dirección de retorno de tu `APP_URL` lista para copiar y los mensajes de error más frecuentes. A los administradores les añade el recuadro **Tu estado ahora**, que revisa la configuración real (app de Meta, permisos pedidos, cuentas conectadas, permiso de publicar, dirección pública para las imágenes de Instagram) y enlaza al paso que arregla cada aviso. Los avisos de Cuentas y de una publicación fallida también enlazan a la parte que corresponde.
 - **Marcas:** el perfil de cada negocio (qué hace, a quién le habla, tono, palabras prohibidas, hashtags, zona horaria) y qué páginas y cuentas de Instagram le pertenecen. De ahí salen la voz de la IA y los destinos de cada publicación.
 - **Publicaciones con IA:** la IA propone varias opciones de texto según la marca y lo que pidas; la persona elige, edita y añade una imagen. Ver [Publicar con IA](#publicar-con-ia-y-flujo-de-aprobación).
@@ -196,7 +197,22 @@ Un rol de **Solo lectura** ve las publicaciones, el calendario y el historial, p
 
 **Qué guardar en las copias de seguridad:** la base de datos **y la carpeta de imágenes** (`MEDIA_DIR`, por defecto `storage/media`).
 
-**Todavía no incluye:** carruseles, vídeo, historias ni más de una imagen por publicación, y las métricas de lo publicado (llegan en la Fase 6).
+**Todavía no incluye:** carruseles, vídeo, historias ni más de una imagen por publicación.
+
+## Estadísticas de las publicaciones
+
+La pantalla **Estadísticas** (menú lateral, la ven todos los roles) muestra cómo les va a las publicaciones que salieron en Facebook e Instagram **desde la app** (las que subas a mano a la red social no se miden):
+
+- **Vistas** (veces que se mostró, con repeticiones), **alcance** (personas distintas), **reacciones** («me gusta» en Instagram), **comentarios**, **compartidos** y **guardados** (solo Instagram), y la **interacción por alcance** (interacciones ÷ personas alcanzadas).
+- Resumen del periodo (7, 30 o 90 días), gráfico de las publicaciones con más interacciones, comparación por red y por marca, la lista completa con orden y la **mejor publicación**. La ficha de cada publicación también resume sus cifras.
+- **Se actualizan solas**: el proceso en segundo plano lee las cifras minutos después de publicar y las repite cada 3 horas los primeros 2 días, cada 12 horas hasta las 2 semanas y una vez al día hasta los 90 días. **Actualizar** las lee al momento (las 12 más recientes de lo que estás viendo; quien solo lee no tiene el botón).
+- «—» significa que la red no entregó esa cifra; no es lo mismo que 0. Las vistas y el alcance pueden tardar unas horas en aparecer.
+
+**Permisos de Meta** (se piden al conectar; están en la lista por defecto): `pages_read_engagement` y `read_insights` para Facebook, `instagram_basic` e `instagram_manage_insights` para Instagram. Si tu `META_SCOPES` del `.env` no los incluye, agrégalos (la línea recomendada está en el Manual, sección 7), habilítalos en los casos de uso de tu app de Meta y pulsa **Reconectar Meta**. Sin el permiso de estadísticas la pantalla lo avisa por cuenta y sigue mostrando lo que sí se puede leer.
+
+**Meta cambia sus métricas cada pocos meses** (en 2025 retiró las «impresiones» y puso «vistas» y «alcance»). La lectura es tolerante: si Meta retira una, las demás siguen llegando, se conserva el valor anterior y la publicación muestra qué cifra faltó. Los nombres de las métricas están en `src/lib/meta/post-metrics.ts`. Se probaron con un Meta simulado, **no con una cuenta real**: la primera lectura real es la prueba final.
+
+Necesita una tabla nueva (`PostTargetMetrics`, migración `stats_metrics`): aplícala con `npm run db:deploy`.
 
 ## Motores de IA (Claude, GPT y Gemini)
 
@@ -274,6 +290,7 @@ Para probar la imagen en tu PC: `docker build -t redes .` y `docker run --env-fi
 | `npm run test:e2e:ads` | Google Ads y TikTok Ads: conexión, cuentas de una MCC, renovación de tokens, sincronización, Anuncios con varias plataformas, errores y permisos, contra servidores simulados |
 | `npm run test:e2e:engines` | Varios motores de IA (Claude, GPT, Gemini): configuración, claves cifradas, selector y errores, contra servidores simulados |
 | `npm run test:e2e:pipeline` | Recorrido completo de una publicación (revisión, aprobación, programación, publicación, reintentos, calendario) contra un Meta simulado |
+| `npm run test:e2e:stats` | Estadísticas de las publicaciones: lectura automática, calendario de relecturas, «Actualizar», permisos que faltan, métricas retiradas y errores de Meta, contra un Meta simulado |
 | `npm run typecheck` / `npm run lint` | Revisión de tipos y estilo |
 
 ## Pruebas de extremo a extremo
@@ -285,6 +302,7 @@ Abren Chrome, recorren la app como una persona real y comprueban el resultado di
 - `npm run test:e2e:ads`: Google Ads y TikTok Ads contra servidores que imitan a Google y a TikTok: conexión (con los parámetros exactos que reciben), cuentas directas y de una administradora (MCC), renovación del token de acceso (una sola vez para varias cuentas), sincronización de 90 días (TikTok en tramos de 30), cifras exactas, Anuncios con varias plataformas y su filtro y desglose, límites de uso, tokens revocados, cancelar o repetir una conexión, desconexión, proceso en segundo plano, solo lectura y qué pasa sin credenciales.
 - `npm run test:e2e:engines`: la pantalla Motores de IA y el selector del editor con tres servidores simulados (Claude, OpenAI y Gemini): claves cifradas en la base, que nunca llegan a pantallas, registros ni auditoría, prueba de conexión, listado de modelos, errores propios de cada API, motor por defecto, motores desactivados o sin clave, límite diario compartido y permisos (incluida una petición fabricada por un editor).
 - `npm run test:e2e:pipeline`: la publicación de principio a fin contra un Meta simulado: imágenes, revisión y aprobación, programación en la zona horaria de la marca, publicación en segundo plano en Facebook e Instagram, reintentos con espera, fallos de permisos y de conexión, publicación parcial, cancelación, recuperación tras una caída, dos procesos compitiendo por la misma publicación, calendario y permisos por rol.
+- `npm run test:e2e:stats`: las estadísticas de lo publicado contra un Meta simulado con cifras conocidas: el proceso en segundo plano lee solo lo que toca (y no lo antiguo, lo fallido ni los borradores), guarda cada cifra tal cual, programa las relecturas según la edad, y ante fallos (sin permiso de insights, métrica retirada, límite de uso, publicación borrada, conexión vencida) conserva lo ya leído y lo explica; además la pantalla (tarjetas, tablas, filtros, orden, avisos), «Actualizar», el Manual y los permisos por rol.
 - `npm run test:e2e:meta`: conexión OAuth, cuentas, sincronización, pantalla de anuncios, tokens vencidos, límites de uso, permisos rechazados, desconexión y permisos por rol. **Arranca solo** la app (hay que haber hecho `npm run build`) y un servidor que imita a Meta, así que no necesita credenciales ni toca Meta de verdad (`content` y `pipeline` también arrancan solos la app):
 
 ```bash

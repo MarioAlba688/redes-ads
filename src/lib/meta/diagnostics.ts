@@ -1,4 +1,4 @@
-import { missingPublishScope, PUBLISH_SCOPE } from "@/lib/meta/scopes";
+import { missingPublishScope, missingStatsScopes, PUBLISH_SCOPE, STATS_SCOPE } from "@/lib/meta/scopes";
 
 // Diagnostico de la configuracion de Meta (Facebook e Instagram) para la pagina Manual. Logica pura, sin servidor ni
 // base de datos: recibe lo que la pagina ya leyo y devuelve una lista de comprobaciones con su estado y que hacer.
@@ -30,6 +30,8 @@ export type DiagnosticInput = {
 };
 
 const IG_SCOPES = ["instagram_basic", PUBLISH_SCOPE.INSTAGRAM_PROFILE] as const;
+/** Permisos que se piden al conectar para leer las estadisticas de lo publicado (instagram_basic ya va con los de publicar). */
+const STATS_REQUESTED = [STATS_SCOPE.FACEBOOK_PAGE.basic, STATS_SCOPE.FACEBOOK_PAGE.insights, STATS_SCOPE.INSTAGRAM_PROFILE.insights] as const;
 
 /** Textos de ejemplo que alguien pudo copiar tal cual del manual o de una guia en lugar de poner su direccion real. */
 const PLACEHOLDER_HOST = /palabras-al-azar|tu-direccion|tu-dominio|tudominio|ejemplo|example\.|nombre-raro/i;
@@ -111,6 +113,36 @@ export function buildMetaDiagnostics(input: DiagnosticInput): DiagnosticCheck[] 
             anchor: "permisos",
           },
     );
+  }
+
+  const statsNotRequested = STATS_REQUESTED.filter((s) => !input.scopes.includes(s));
+  const noStats = [...pages, ...instagram].filter((a) => {
+    const m = missingStatsScopes(a.kind, a.scopes);
+    return m.basic !== null || m.insights !== null;
+  });
+  if (statsNotRequested.length > 0) {
+    checks.push({
+      id: "estadisticas",
+      status: "warn",
+      title: "No se están pidiendo todos los permisos de estadísticas",
+      detail: `Faltan en META_SCOPES: ${statsNotRequested.join(", ")}. Sin ellos no se leen las vistas, el alcance ni las reacciones de tus publicaciones. Agrégalos cuando tu app de Meta los tenga habilitados, y reconecta.`,
+      anchor: "estadisticas",
+    });
+  } else if (noStats.length > 0) {
+    checks.push({
+      id: "estadisticas",
+      status: "warn",
+      title: `${noStats.length} cuenta(s) conectada(s) sin permiso para leer estadísticas`,
+      detail: `${noStats.map((a) => a.name).join(", ")}. Agrega el permiso en tu app de Meta y pulsa «Reconectar Meta»; hasta entonces esas cuentas no muestran todas sus cifras.`,
+      anchor: "estadisticas",
+    });
+  } else {
+    checks.push({
+      id: "estadisticas",
+      status: "ok",
+      title: "Se pueden leer las estadísticas de las publicaciones",
+      detail: pages.length + instagram.length > 0 ? "Las cuentas conectadas tienen los permisos para leer vistas, alcance e interacciones." : "META_SCOPES incluye los permisos de estadísticas.",
+    });
   }
 
   checks.push(

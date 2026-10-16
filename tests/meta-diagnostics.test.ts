@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { buildMetaDiagnostics, publicImageCheck, type DiagnosticInput } from "@/lib/meta/diagnostics";
 
-const ALL = ["ads_read", "business_management", "pages_show_list", "pages_read_engagement", "pages_manage_posts", "instagram_basic", "instagram_content_publish"];
+const ALL = [
+  "ads_read",
+  "business_management",
+  "pages_show_list",
+  "pages_read_engagement",
+  "pages_manage_posts",
+  "read_insights",
+  "instagram_basic",
+  "instagram_content_publish",
+  "instagram_manage_insights",
+];
 // Lo que concedio de verdad la conexion real del usuario el 2026-10-15: anuncios y paginas, sin publicar.
 const TODAY_SCOPES = "pages_show_list,ads_read,business_management,pages_read_engagement,public_profile";
 const base: DiagnosticInput = { configured: true, scopes: ALL, accounts: [], appUrl: "http://localhost:3000", mediaBaseUrl: null };
@@ -110,6 +120,44 @@ describe("buildMetaDiagnostics", () => {
     const local = buildMetaDiagnostics(base);
     expect(byId(local, "imagenes")).toMatchObject({ status: "warn", anchor: "publicar-instagram" });
     expect(byId(local, "imagenes").detail).toMatch(/Facebook sí publica/);
+  });
+
+  it("estadisticas: avisa si META_SCOPES no pide los permisos para leerlas y nombra cuales faltan", () => {
+    const c = buildMetaDiagnostics({ ...base, scopes: ALL.filter((s) => s !== "read_insights" && s !== "instagram_manage_insights") });
+    const stats = byId(c, "estadisticas");
+    expect(stats.status).toBe("warn");
+    expect(stats.detail).toContain("read_insights, instagram_manage_insights");
+    expect(stats.detail).not.toContain("pages_read_engagement");
+    expect(stats.anchor).toBe("estadisticas");
+  });
+
+  it("estadisticas: con todo pedido y sin cuentas aun, queda en orden", () => {
+    expect(byId(buildMetaDiagnostics(base), "estadisticas")).toMatchObject({ status: "ok", detail: expect.stringContaining("META_SCOPES") });
+  });
+
+  it("estadisticas: cuentas conectadas sin read_insights (la conexion real de hoy) salen nombradas", () => {
+    const c = buildMetaDiagnostics({
+      ...base,
+      accounts: [
+        { kind: "FACEBOOK_PAGE", name: "Reservi", scopes: TODAY_SCOPES },
+        { kind: "FACEBOOK_PAGE", name: "Smartec", scopes: `${TODAY_SCOPES},read_insights` },
+        { kind: "AD_ACCOUNT", name: "Cuenta publicitaria", scopes: TODAY_SCOPES },
+      ],
+    });
+    const stats = byId(c, "estadisticas");
+    expect(stats.status).toBe("warn");
+    expect(stats.title).toContain("1 cuenta");
+    expect(stats.detail).toContain("Reservi");
+    expect(stats.detail).not.toContain("Smartec");
+    expect(stats.detail).not.toContain("Cuenta publicitaria");
+  });
+
+  it("estadisticas: con los permisos concedidos o sin conocerlos, no alarma", () => {
+    const granted = "pages_read_engagement,read_insights,instagram_basic,instagram_manage_insights";
+    const ok = buildMetaDiagnostics({ ...base, accounts: [{ kind: "FACEBOOK_PAGE", name: "Reservi", scopes: granted }, { kind: "INSTAGRAM_PROFILE", name: "Oficial", scopes: granted }] });
+    expect(byId(ok, "estadisticas")).toMatchObject({ status: "ok", detail: expect.stringContaining("cuentas conectadas") });
+    const unknown = buildMetaDiagnostics({ ...base, accounts: [{ kind: "FACEBOOK_PAGE", name: "Reservi", scopes: null }] });
+    expect(byId(unknown, "estadisticas").status).toBe("ok");
   });
 
   it("cada comprobacion que no esta bien dice a que parte del manual ir", () => {

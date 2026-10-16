@@ -23,7 +23,8 @@ const MATRIX = {
   "audit.view": ["ADMIN"],
   "accounts.view": ALL,
   "accounts.manage": ["ADMIN"],
-  "metrics.view": ALL,
+  "metrics.view": ALL, // anuncios y estadisticas de las publicaciones
+  "stats.refresh": ["ADMIN", "EDITOR", "APPROVER"], // volver a leer las estadisticas de lo publicado (llama a Meta)
   "brands.view": ALL,
   "brands.manage": ["ADMIN", "EDITOR"], // perfil de voz de cada marca
   "content.view": ALL,

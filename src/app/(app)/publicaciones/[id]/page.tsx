@@ -6,6 +6,7 @@ import { getAiUsage } from "@/lib/ai/service";
 import { requireUser } from "@/lib/auth/dal";
 import { db } from "@/lib/db";
 import { dateTimeFormat } from "@/lib/display-time";
+import { formatInt } from "@/lib/format";
 import { mediaPath } from "@/lib/media";
 import { can } from "@/lib/permissions";
 import { ACCOUNT_KIND_LABELS } from "@/lib/platforms";
@@ -17,6 +18,7 @@ import {
   isEditable,
   type PostStatusName,
 } from "@/lib/posts";
+import { interactions } from "@/lib/stats/metrics";
 import { formatLocalInput } from "@/lib/time";
 import { Composer, DeleteDraftForm } from "../composer";
 import { PostActions } from "./post-actions";
@@ -60,7 +62,7 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
       brand: { select: { id: true, name: true, timezone: true } },
       createdBy: { select: { name: true } },
       reviewedBy: { select: { name: true } },
-      targets: { include: { account: { select: { id: true, name: true, kind: true, handle: true } } } },
+      targets: { include: { account: { select: { id: true, name: true, kind: true, handle: true } }, metrics: true } },
       media: { orderBy: { position: "asc" } },
     },
   });
@@ -234,6 +236,27 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
                     <a href={t.externalUrl} target="_blank" rel="noopener noreferrer" className="ml-auto text-xs text-primary hover:underline">
                       Ver publicación
                     </a>
+                  )}
+                  {t.status === "PUBLISHED" && (
+                    <span className="basis-full text-xs text-muted">
+                      {t.metrics && interactions(t.metrics) !== null ? (
+                        <>
+                          {[
+                            t.metrics.views !== null && `${formatInt(t.metrics.views)} vistas`,
+                            t.metrics.reach !== null && `${formatInt(t.metrics.reach)} personas alcanzadas`,
+                            `${formatInt(interactions(t.metrics) as number)} interacciones`,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                          {" · "}
+                        </>
+                      ) : (
+                        "Estadísticas: aún sin leer · "
+                      )}
+                      <Link href="/estadisticas" className="text-primary hover:underline">
+                        Ver estadísticas
+                      </Link>
+                    </span>
                   )}
                   {t.error && (
                     <span className="basis-full text-xs text-danger">

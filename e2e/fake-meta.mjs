@@ -68,7 +68,18 @@ const DEFAULT_SCENARIO = {
   flaky: {}, // { "P-1": 2 } las proximas N publicaciones de esa cuenta fallan con error 500 y luego funciona
   igProcessing: 0, // cuantas consultas del contenedor de Instagram responden IN_PROGRESS antes de FINISHED
   igContainer: "ok", // ok | error (el contenedor termina en ERROR)
+  // --- estadisticas de lo publicado ---
+  stats: "ok", // ok | noinsights (sin permiso de insights) | badmetric (Meta retiro una metrica) | ratelimit (limite de uso) | gone (la publicacion ya no existe) | hidelikes (Instagram sin like_count)
+  statsBoost: 0, // se suma a todas las cifras: sirve para comprobar que una nueva lectura las actualiza
 };
+
+// Cifras deterministas de una publicacion segun su numero (el final de su id): la prueba calcula lo mismo para comparar.
+export function fbStatsFor(n, boost = 0) {
+  return { reactions: 10 + 3 * n + boost, comments: 2 + n + boost, shares: (n % 3) + boost, views: 500 + 40 * n + 10 * boost, reach: 300 + 25 * n + 5 * boost };
+}
+export function igStatsFor(n, boost = 0) {
+  return { likes: 20 + 2 * n + boost, comments: 1 + n + boost, reach: 200 + 20 * n + 4 * boost, views: 400 + 35 * n + 8 * boost, saved: n + boost, shares: (n % 2) + boost };
+}
 
 // Token que Meta acepta para publicar en cada pagina / cuenta de Instagram.
 const OWNER_TOKEN = { "P-1": PAGE_TOKEN, "IG-1": PAGE_TOKEN, "P-2": "PAGE-TOKEN-2222" };
@@ -279,6 +290,49 @@ export function startFakeMeta(port, expectedRedirectUri) {
       const id = `IGM-${++seq}`;
       published.push({ kind: "ig-publish", account: accountId, creation: arg("creation_id"), id });
       return json(res, 200, { id });
+    }
+
+    // --- estadisticas de lo publicado (Facebook: <pagina>_<n>; Instagram: IGM-<n>) ---
+    const fbPost = path.match(/^(P-[A-Za-z0-9]+)_(\d+)(\/insights)?$/);
+    const igMedia = path.match(/^IGM-(\d+)(\/insights)?$/);
+    const isIgStats = igMedia && (igMedia[2] || (p.get("fields") ?? "").includes("like_count"));
+    if (req.method === "GET" && (fbPost || isIgStats)) {
+      const accountId = fbPost ? fbPost[1] : "IG-1";
+      if (OWNER_TOKEN[accountId] !== token) return graphError(res, 403, 200, "(#200) The user hasn't authorized the application to perform this action");
+      if (scenario.stats === "gone") {
+        return graphError(res, 400, 100, "Unsupported get request. Object with ID 'X' does not exist, cannot be loaded due to missing permissions, or does not support this operation", { error_subcode: 33 });
+      }
+      const boost = scenario.statsBoost;
+      const wantsInsights = fbPost ? !!fbPost[3] : !!igMedia[2];
+      if (!wantsInsights) {
+        if (fbPost) {
+          const s = fbStatsFor(Number(fbPost[2]), boost);
+          return json(res, 200, {
+            id: `${fbPost[1]}_${fbPost[2]}`,
+            reactions: { data: [], summary: { total_count: s.reactions } },
+            comments: { data: [], summary: { total_count: s.comments } },
+            // Facebook omite `shares` cuando nadie compartio la publicacion.
+            ...(s.shares > 0 ? { shares: { count: s.shares } } : {}),
+          });
+        }
+        const s = igStatsFor(Number(igMedia[1]), boost);
+        return json(res, 200, { id: `IGM-${igMedia[1]}`, ...(scenario.stats === "hidelikes" ? {} : { like_count: s.likes }), comments_count: s.comments });
+      }
+      if (scenario.stats === "noinsights") return graphError(res, 403, 10, "(#10) Application does not have permission for this action");
+      if (scenario.stats === "ratelimit") return graphError(res, 400, 4, "(#4) Application request limit reached");
+      const asked = (p.get("metric") ?? "").split(",").filter(Boolean);
+      const values = fbPost
+        ? (() => {
+            const s = fbStatsFor(Number(fbPost[2]), boost);
+            return { post_media_view: s.views, ...(scenario.stats === "badmetric" ? {} : { post_total_media_view_unique: s.reach }) };
+          })()
+        : (() => {
+            const s = igStatsFor(Number(igMedia[1]), boost);
+            return { reach: s.reach, views: s.views, ...(scenario.stats === "badmetric" ? {} : { saved: s.saved }), shares: s.shares };
+          })();
+      // Como Meta: si se pide alguna metrica que no existe, rechaza todo el pedido.
+      if (asked.length === 0 || asked.some((m) => !(m in values))) return graphError(res, 400, 100, "(#100) The value must be a valid insights metric");
+      return json(res, 200, { data: asked.map((name) => ({ name, period: "lifetime", values: [{ value: values[name] }], title: name, id: `${path}/${name}/lifetime` })) });
     }
 
     // Estado de un contenedor de Instagram y datos de lo ya publicado.

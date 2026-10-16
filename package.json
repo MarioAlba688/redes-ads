@@ -15,6 +15,7 @@
     "test:e2e:pipeline": "node e2e/pipeline.e2e.mjs",
     "test:e2e:engines": "node e2e/engines.e2e.mjs",
     "test:e2e:ads": "node e2e/ads.e2e.mjs",
+    "test:e2e:stats": "node e2e/stats.e2e.mjs",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",

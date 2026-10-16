@@ -7,6 +7,7 @@ const ALL_PERMISSIONS: Permission[] = [
   "accounts.view",
   "accounts.manage",
   "metrics.view",
+  "stats.refresh",
   "brands.view",
   "brands.manage",
   "content.view",
@@ -62,6 +63,12 @@ describe("permisos por rol", () => {
     expect(can("APPROVER", "content.publish")).toBe(true);
     expect(can("ADMIN", "content.publish")).toBe(true);
     expect(can("EDITOR", "content.publish")).toBe(false);
+  });
+
+  it("todos ven las estadisticas, pero solo quien trabaja con contenido las vuelve a leer (cada lectura llama a Meta)", () => {
+    for (const role of ROLES) expect(can(role, "metrics.view")).toBe(true);
+    for (const role of ["ADMIN", "EDITOR", "APPROVER"] as const) expect(can(role, "stats.refresh")).toBe(true);
+    expect(can("VIEWER", "stats.refresh")).toBe(false);
   });
 
   it("isRole solo acepta roles validos", () => {

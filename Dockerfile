@@ -1,6 +1,6 @@
 # Imagen de produccion de Redes (Next.js 16 + Prisma 7 + MySQL).
 # Las variables de entorno NO se hornean en la imagen: se pasan al arrancar el contenedor (en Easypanel, pestana
-# Environment). Para construirla no hace falta ninguna: la configuracion se lee al primer uso, no al compilar.
+# Environment). Para construirla no hace falta ninguna real (ver la nota de DATABASE_URL en la etapa builder).
 
 # --- Base comun: Node 22 + openssl (lo necesita el motor de migraciones de Prisma) -----------------------------
 FROM node:22-bookworm-slim AS base
@@ -18,7 +18,10 @@ COPY prisma ./prisma
 COPY prisma.config.ts ./
 RUN npm ci
 COPY . .
-RUN npm run build
+# `next build` importa las rutas para analizarlas y src/lib/db.ts valida DATABASE_URL al importarse, asi que sin
+# ella el build se cae. Esta es solo de relleno y vive unicamente en este comando (no queda en la imagen): el
+# cliente de Prisma conecta al hacer la primera consulta, no al crearse, por lo que no se abre ninguna conexion.
+RUN DATABASE_URL="mysql://build:build@127.0.0.1:3306/build" npm run build
 
 # --- Ejecucion ------------------------------------------------------------------------------------------------
 # Se copia la app completa (con node_modules) y no el modo "standalone" a proposito: el arranque aplica las

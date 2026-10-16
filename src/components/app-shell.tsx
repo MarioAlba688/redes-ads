@@ -11,6 +11,7 @@ function navFor(user: SessionUser): NavItem[] {
   if (can(user.role, "metrics.view")) items.push({ href: "/anuncios", label: "Anuncios" });
   if (can(user.role, "brands.view")) items.push({ href: "/marcas", label: "Marcas" });
   if (can(user.role, "content.view")) items.push({ href: "/publicaciones", label: "Publicaciones" });
+  if (can(user.role, "metrics.view")) items.push({ href: "/estadisticas", label: "Estadísticas" });
   if (can(user.role, "ai.manage")) items.push({ href: "/ia", label: "Motores de IA" });
   if (can(user.role, "team.manage")) items.push({ href: "/equipo", label: "Equipo" });
   items.push({ href: "/manual", label: "Manual" });

@@ -11,8 +11,9 @@ import { Callout, Code, Ext, Problem, Section, Step, Steps, UI } from "./parts";
 
 export const metadata: Metadata = { title: "Manual" };
 
-/** Permisos con los que funciona todo: anuncios, paginas, publicar en Facebook y en Instagram. */
-const RECOMMENDED_SCOPES = "ads_read,business_management,pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish";
+/** Permisos con los que funciona todo: anuncios, paginas, publicar en Facebook y en Instagram, y leer sus estadisticas. */
+const RECOMMENDED_SCOPES =
+  "ads_read,business_management,pages_show_list,pages_read_engagement,pages_manage_posts,read_insights,instagram_basic,instagram_content_publish,instagram_manage_insights";
 
 const TOC = [
   { id: "requisitos", label: "Antes de empezar" },
@@ -22,6 +23,7 @@ const TOC = [
   { id: "conectar", label: "4. Conectar en la app" },
   { id: "marcas", label: "5. Asignar a cada marca" },
   { id: "publicar-instagram", label: "6. Publicar en Instagram" },
+  { id: "estadisticas", label: "7. Estadísticas de las publicaciones" },
   { id: "permisos", label: "Si falta el permiso de publicar" },
   { id: "problemas", label: "Mensajes frecuentes" },
 ];
@@ -61,7 +63,7 @@ export default async function ManualPage() {
     <>
       <PageHeader
         title="Manual: Facebook e Instagram"
-        description="Cómo dejar conectadas tus páginas y cuentas de Instagram para publicar desde aquí, paso a paso y con los problemas que más se ven."
+        description="Cómo dejar conectadas tus páginas y cuentas de Instagram para publicar desde aquí y ver cómo les va, paso a paso y con los problemas que más se ven."
       />
 
       <div className="space-y-6">
@@ -324,6 +326,46 @@ export default async function ManualPage() {
           </Callout>
         </Section>
 
+        <Section id="estadisticas" title="7. Estadísticas de las publicaciones" intro="Vistas, alcance, reacciones, comentarios, compartidos y guardados de lo que publicas desde esta app. Se ven en el menú Estadísticas.">
+          <Steps>
+            <Step>
+              En tu app de Meta, dentro de los mismos casos de uso del paso 2, comprueba en <UI>Permisos y funciones</UI> que aparecen <code>pages_read_engagement</code> y <code>read_insights</code> (Facebook) e{" "}
+              <code>instagram_basic</code> e <code>instagram_manage_insights</code> (Instagram). Si falta alguno, habilítalo ahí.
+            </Step>
+            <Step>
+              Agrégalos a <code>META_SCOPES</code> (paso 3), reinicia la app y pulsa <UI>Reconectar Meta</UI> en <Link href="/cuentas" className="font-medium text-primary hover:underline">Cuentas</Link>. Sin reconectar, la conexión guardada sigue sin los permisos nuevos.
+            </Step>
+            <Step>
+              Nada más: la app lee las cifras sola, unos minutos después de publicar, y las vuelve a leer cada 3 horas los primeros 2 días, cada 12 horas hasta las 2 semanas y una vez al día hasta los 90 días. En{" "}
+              <Link href="/estadisticas" className="font-medium text-primary hover:underline">Estadísticas</Link> el botón <UI>Actualizar</UI> las lee al momento.
+            </Step>
+          </Steps>
+          <div className="grid gap-4 text-sm leading-relaxed md:grid-cols-2">
+            <div className="rounded-lg border border-border p-4">
+              <p className="font-semibold">Facebook</p>
+              <p className="mt-1 text-muted">
+                Reacciones, comentarios y compartidos (permiso <code>pages_read_engagement</code>). Vistas y alcance (permiso <code>read_insights</code>).
+              </p>
+            </div>
+            <div className="rounded-lg border border-border p-4">
+              <p className="font-semibold">Instagram</p>
+              <p className="mt-1 text-muted">
+                «Me gusta» y comentarios (<code>instagram_basic</code>). Alcance, vistas, guardados y compartidos (<code>instagram_manage_insights</code>). Si la cuenta oculta los «me gusta», Instagram no los entrega y se ve «—».
+              </p>
+            </div>
+          </div>
+          <Callout tone="warning" title="Meta cambia sus métricas">
+            <p>
+              En 2025 Meta retiró las «impresiones» y puso «vistas» y «alcance», y los nombres siguen cambiando. Si una cifra desaparece, la app guarda las demás y avisa cuál faltó en esa publicación; no se pierde nada de lo ya leído.
+            </p>
+          </Callout>
+          <ul className="list-disc space-y-1.5 pl-5 text-sm leading-relaxed">
+            <li>Solo se miden las publicaciones hechas <UI>desde esta app</UI>, no las que subas a mano a Facebook o Instagram.</li>
+            <li>Las vistas y el alcance pueden tardar unas horas en aparecer. Hasta entonces se ve «—», que no es lo mismo que 0.</li>
+            <li>Facebook e Instagram no miden igual: compáralas por separado.</li>
+          </ul>
+        </Section>
+
         <Section id="permisos" title="Si la app dice que falta el permiso de publicar" intro="Pasa cuando la conexión con Meta se hizo sin pages_manage_posts (Facebook) o instagram_content_publish (Instagram). La app no deja aprobar ni publicar hasta arreglarlo.">
           <Steps>
             <Step>
@@ -400,6 +442,28 @@ export default async function ManualPage() {
             <Problem message="La publicación quedó «Publicada en parte» (salió en Facebook pero no en Instagram)">
               <p>
                 Cada destino se publica por separado. Arregla el motivo que aparece en el destino que falló y pulsa <UI>Reintentar los que fallaron</UI>: solo se repite el que falló, nunca se vuelve a publicar en Facebook.
+              </p>
+            </Problem>
+            <Problem message="«Estas cuentas no tienen el permiso read_insights / instagram_manage_insights / pages_read_engagement…» (en Estadísticas)">
+              <p>
+                La conexión con Meta se hizo sin esos permisos, así que no se leen todas las cifras (o ninguna). Sigue el paso 7: habilítalos en tu app de Meta, agrégalos a <code>META_SCOPES</code>, reinicia y pulsa <UI>Reconectar Meta</UI>. La
+                lectura siguiente trae todo y el aviso desaparece.
+              </p>
+            </Problem>
+            <Problem message="«Meta no entregó: alcance / vistas / guardados…» (aviso en una publicación de Estadísticas)">
+              <p>
+                Meta ya no ofrece esa métrica, o no aplica a ese tipo de publicación. Las demás cifras siguen llegando y la anterior se conserva. Si ocurre en todas las publicaciones, Meta cambió el nombre de la métrica: avisa a quien administra la app para que se actualice.
+              </p>
+            </Problem>
+            <Problem message="«Meta no encuentra esta publicación (la borraron en la red social, o falta un permiso para verla)»">
+              <p>
+                O la borraron en Facebook o Instagram, o tu usuario ya no tiene acceso a la página o a la cuenta. Sus cifras quedan como estaban; la app lo vuelve a intentar a diario.
+              </p>
+            </Problem>
+            <Problem message="Las cifras salen con «—» o no cambian">
+              <p>
+                «—» significa que la red no entregó esa cifra (no es 0). Las vistas y el alcance tardan unas horas en aparecer, y Meta actualiza sus cifras con retraso. Pulsa <UI>Actualizar</UI> en Estadísticas para leerlas ya; si sigue igual, mira el aviso
+                bajo esa publicación.
               </p>
             </Problem>
             <Problem message="Facebook muestra un error de «redirect_uri» al conectar">
