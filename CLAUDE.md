@@ -44,6 +44,7 @@ npm run dev | build | start
 npm run typecheck && npm run lint && npm test
 npm run db:migrate        # desarrollo: crea/aplica migraciones
 npm run db:deploy         # producción: aplica pendientes
+npm run admin:reset-password # restablece la contraseña de una persona por terminal (sin «olvidé mi contraseña» en la app; ver scripts/reset-password.mjs)
 npm run test:e2e          # Fase 1, navegador real; vacía la base *_test (ver README)
 npm run test:e2e:meta     # Fase 2, arranca app + Meta simulado; exige `npm run build` previo
 npm run test:e2e:content  # Fase 3a, marcas + IA con Claude simulado

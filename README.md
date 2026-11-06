@@ -325,6 +325,7 @@ Para probar la imagen en tu PC: `docker build -t redes .` y `docker run --env-fi
 | `npm run db:migrate -- --name <cambio>` | Crear una migración nueva (**solo contra una base local de desarrollo**) |
 | `npm run db:deploy` | Aplicar migraciones pendientes (producción y bases remotas) |
 | `npm run db:studio` | Explorar la base de datos en el navegador |
+| `npm run admin:reset-password` | Restablecer la contraseña de una persona (p. ej. si se olvidó la del administrador): pide el correo y la clave nueva, muestra a quién cambia y en qué base de datos, pide confirmación, quita el bloqueo y cierra sus sesiones |
 | `npx prisma generate` | Regenerar el cliente de Prisma tras cambiar `schema.prisma` (también corre al hacer `npm install`) |
 | `npm test` | Pruebas unitarias (permisos, cifrado, contraseñas, cliente de Meta, informes) |
 | `npm run test:e2e` | Prueba de extremo a extremo de la Fase 1 con navegador real (ver abajo) |
@@ -403,6 +404,16 @@ src/app/(auth)/           Login, instalación e invitaciones
 src/app/(app)/            Panel, Cuentas, Anuncios, Marcas, Publicaciones (lista, ficha y calendario), Equipo y Perfil (requieren sesión)
 e2e/                      Pruebas con navegador real y los servidores simulados de Meta (fake-meta.mjs) y Claude (fake-anthropic.mjs)
 ```
+
+## Si se olvidó la contraseña del administrador
+
+La app **no tiene «olvidé mi contraseña»** (no envía correos) y ni siquiera otro administrador puede cambiar la contraseña de alguien desde *Equipo*: ahí solo se invita, se cambia el rol y se desactiva. Cada persona cambia la suya en *Perfil* (pide la actual). Si no se acuerda de la actual, se restablece directamente en la base de datos con un comando que ejecuta quien tiene el archivo `.env` de la app:
+
+```
+npm run admin:reset-password
+```
+
+Muestra las personas registradas, pregunta el correo y la contraseña nueva (sin mostrarla; mínimo 10 caracteres con letras y números), dice en qué base de datos va a escribir y pide confirmación antes de cambiar nada. Además quita el bloqueo por intentos fallidos (5 intentos bloquean 15 minutos) y cierra las sesiones abiertas de esa persona; queda un registro `user.password_reset_cli` en el historial. No abre ninguna puerta nueva: solo funciona con la clave de la base de datos que ya está en `.env`. Si hay otra cuenta de administrador que sí puede entrar, otra salida es invitar desde *Equipo* a un administrador nuevo con otro correo y desactivar la cuenta olvidada.
 
 ## Seguridad: cómo está resuelto
 

@@ -20,7 +20,8 @@
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "admin:reset-password": "node scripts/reset-password.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
