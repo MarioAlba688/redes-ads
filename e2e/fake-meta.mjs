@@ -69,6 +69,7 @@ const DEFAULT_SCENARIO = {
   flaky: {}, // { "P-1": 2 } las proximas N publicaciones de esa cuenta fallan con error 500 y luego funciona
   igProcessing: 0, // cuantas consultas del contenedor de Instagram responden IN_PROGRESS antes de FINISHED
   igContainer: "ok", // ok | error (el contenedor termina en ERROR)
+  storiesList: "ok", // ok | fail: el listado de historias de la pagina (GET <pagina>/stories) responde error (la app usa entonces el enlace de la pagina)
   // --- estadisticas de lo publicado ---
   stats: "ok", // ok | noinsights (sin permiso de insights) | nousercontent (sin pages_read_user_content: leer reacciones/comentarios da error) | badmetric (Meta retiro una metrica) | ratelimit (limite de uso) | gone (la publicacion ya no existe) | hidelikes (Instagram sin like_count)
   statsBoost: 0, // se suma a todas las cifras: sirve para comprobar que una nueva lectura las actualiza
@@ -128,7 +129,8 @@ export function startFakeMeta(port, expectedRedirectUri) {
   let lastDialog = null;
   let published = []; // lo que "salio" en Facebook / Instagram
   let containers = new Map(); // contenedores de Instagram creados
-  let unpublishedPhotos = new Map(); // fotos subidas con published=false (para adjuntarlas a una publicacion)
+  let unpublishedPhotos = new Map(); // fotos subidas con published=false (para adjuntarlas a una publicacion o a una historia)
+  let stories = []; // historias de pagina creadas (GET <pagina>/stories las lista)
   let seq = 0;
 
   const json = (res, status, body) => {
@@ -159,6 +161,7 @@ export function startFakeMeta(port, expectedRedirectUri) {
       published = [];
       containers = new Map();
       unpublishedPhotos = new Map();
+      stories = [];
       return json(res, 200, {});
     }
     if (url.pathname === "/__requests") return json(res, 200, { requests, lastDialog });
@@ -251,7 +254,7 @@ export function startFakeMeta(port, expectedRedirectUri) {
 
     // --- publicar en una pagina de Facebook o una cuenta de Instagram ---
     if (req.method === "POST") {
-      const m = path.match(/^([^/]+)\/(feed|photos|media|media_publish)$/);
+      const m = path.match(/^([^/]+)\/(feed|photos|photo_stories|media|media_publish)$/);
       if (!m) return graphError(res, 404, 803, `Unknown path components: ${path}`);
       const [, accountId, edge] = m;
       if (OWNER_TOKEN[accountId] !== token) {
@@ -282,6 +285,9 @@ export function startFakeMeta(port, expectedRedirectUri) {
           if (photos.some((ph) => !ph || ph.account !== accountId)) {
             return graphError(res, 400, 100, "(#100) Invalid parameter: attached_media has a photo that was not uploaded unpublished to this page");
           }
+          photos.forEach((ph) => {
+            ph.used = "feed"; // una foto que ya salio en una publicacion no se puede usar en una historia
+          });
           const id = `${accountId}_${++seq}`;
           published.push({ kind: "feed", account: accountId, message: arg("message"), link: arg("link"), id, attached: photos.map((ph) => ({ id: ph.id, sha256: ph.sha256, bytes: ph.bytes, name: ph.name })) });
           return json(res, 200, { id });
@@ -305,6 +311,29 @@ export function startFakeMeta(port, expectedRedirectUri) {
         published.push({ kind: "photo", account: accountId, caption: arg("caption"), bytes: file.bytes.length, sha256: sha256(file.bytes), mime: file.type, filename: file.name, id: postId });
         return json(res, 200, { id: `photo-${seq}`, post_id: postId });
       }
+      if (edge === "photo_stories") {
+        // Historia de foto de una pagina: usa una foto subida SIN publicar a ESTA pagina y que no se haya usado antes.
+        const photo = unpublishedPhotos.get(arg("photo_id") ?? "");
+        if (!photo || photo.account !== accountId) {
+          return graphError(res, 400, 100, "(#100) Invalid parameter: photo_id must be a photo uploaded unpublished to this page");
+        }
+        if (photo.used) return graphError(res, 400, 100, "(#100) The photo was already used in a post or a story and cannot be used in a story");
+        photo.used = "story";
+        const postId = `${accountId}_${++seq}`;
+        stories.push({ account: accountId, post_id: postId, status: "PUBLISHED", media_type: "photo", media_id: photo.id, url: `https://www.facebook.com/stories/${accountId}/${seq}` });
+        published.push({
+          kind: "fb-story",
+          account: accountId,
+          id: postId,
+          photoId: photo.id,
+          sha256: photo.sha256,
+          bytes: photo.bytes,
+          name: photo.name,
+          // Que campos mando la app (sin las credenciales): una historia no lleva mensaje, pie ni enlace.
+          fields: [...body.fields.keys()].filter((k) => k !== "access_token" && k !== "appsecret_proof"),
+        });
+        return json(res, 200, { success: true, post_id: postId });
+      }
       if (edge === "media" && arg("media_type") === "CAROUSEL") {
         // Contenedor padre del carrusel: reune de 2 a 10 contenedores hijos (is_carousel_item) de esta misma cuenta.
         const ids = (arg("children") ?? "").split(",").filter(Boolean);
@@ -318,6 +347,11 @@ export function startFakeMeta(port, expectedRedirectUri) {
         return json(res, 200, { id });
       }
       if (edge === "media") {
+        // Historia: el contenedor lleva media_type=STORIES y una imagen (o video); el resto es igual que una publicacion.
+        const isStory = arg("media_type") === "STORIES";
+        if (isStory && !arg("image_url") && !arg("video_url")) {
+          return graphError(res, 400, 100, "(#100) The parameter image_url or video_url is required for a story");
+        }
         // Instagram descarga la imagen de la URL publica que le dimos, sin sesion: lo comprobamos igual.
         const imageUrl = arg("image_url");
         let fetched;
@@ -333,8 +367,8 @@ export function startFakeMeta(port, expectedRedirectUri) {
         }
         const id = `CONT-${++seq}`;
         const child = arg("is_carousel_item") === "true";
-        containers.set(id, { account: accountId, polls: 0, child });
-        published.push({ kind: child ? "ig-child" : "ig-container", account: accountId, caption: arg("caption"), imageUrl, fetched, id });
+        containers.set(id, { account: accountId, polls: 0, child, story: isStory });
+        published.push({ kind: child ? "ig-child" : isStory ? "ig-story" : "ig-container", account: accountId, caption: arg("caption"), imageUrl, fetched, id });
         return json(res, 200, { id });
       }
       // media_publish
@@ -343,8 +377,19 @@ export function startFakeMeta(port, expectedRedirectUri) {
       // Un hijo de carrusel no se publica solo: se publica el padre.
       if (container.child) return graphError(res, 400, 9007, "(#9007) The media is not ready to be published. Carousel items are published through their parent container.");
       const id = `IGM-${++seq}`;
-      published.push({ kind: "ig-publish", account: accountId, creation: arg("creation_id"), id, carousel: !!container.children });
+      published.push({ kind: "ig-publish", account: accountId, creation: arg("creation_id"), id, carousel: !!container.children, story: !!container.story });
       return json(res, 200, { id });
+    }
+
+    // --- historias que tiene una pagina (GET <pagina>/stories) ---
+    const storiesMatch = path.match(/^(P-[A-Za-z0-9]+)\/stories$/);
+    if (req.method === "GET" && storiesMatch) {
+      if (OWNER_TOKEN[storiesMatch[1]] !== token) return graphError(res, 403, 200, "(#200) The user hasn't authorized the application to perform this action");
+      if (scenario.storiesList === "fail") return graphError(res, 400, 100, "(#100) Unsupported get request");
+      const data = stories
+        .filter((s) => s.account === storiesMatch[1])
+        .map((s) => ({ post_id: s.post_id, status: s.status, media_type: s.media_type, media_id: s.media_id, url: s.url }));
+      return json(res, 200, { data });
     }
 
     // --- estadisticas de lo publicado (Facebook: <pagina>_<n>; Instagram: IGM-<n>) ---
@@ -409,7 +454,11 @@ export function startFakeMeta(port, expectedRedirectUri) {
       return json(res, 200, { id: containerMatch[1], status_code, ...(status_code === "ERROR" ? { status: "Error: Media upload has failed with error code 2207026" } : {}) });
     }
     const igMediaMatch = path.match(/^(IGM-\d+)$/);
-    if (igMediaMatch) return json(res, 200, { id: igMediaMatch[1], permalink: `https://www.instagram.com/p/FAKE${igMediaMatch[1]}/` });
+    if (igMediaMatch) {
+      const rec = published.find((x) => x.id === igMediaMatch[1]);
+      const permalink = rec?.story ? `https://www.instagram.com/stories/mimarca/${igMediaMatch[1]}/` : `https://www.instagram.com/p/FAKE${igMediaMatch[1]}/`;
+      return json(res, 200, { id: igMediaMatch[1], permalink });
+    }
 
     const ins = path.match(/^act_(\d+)\/insights$/);
     if (ins) {
@@ -462,6 +511,7 @@ export function startFakeMeta(port, expectedRedirectUri) {
           published = [];
           containers = new Map();
           unpublishedPhotos = new Map();
+          stories = [];
           ads.reset();
         },
         ads,

@@ -95,4 +95,55 @@ describe("validatePostForReview", () => {
   it("junta varios problemas a la vez para corregirlos de una vez", () => {
     expect(validatePostForReview({ text: "", brandId: "b1", targets: [ig], media: [] })).toHaveLength(2);
   });
+
+  it("indicar FEED es lo mismo que no indicar formato", () => {
+    expect(validatePostForReview({ ...base, format: "FEED", text: "", targets: [ig], media: [] })).toEqual(validatePostForReview({ ...base, text: "", targets: [ig], media: [] }));
+  });
+});
+
+describe("validatePostForReview: historias", () => {
+  const story = { ...base, format: "STORY" as const, text: "" };
+  const vertical = { mimeType: "image/jpeg", width: 1080, height: 1920 };
+
+  it("una historia con una foto esta lista sin texto, en Facebook y en Instagram", () => {
+    expect(validatePostForReview({ ...story, targets: [fb], media: [vertical] })).toEqual([]);
+    expect(validatePostForReview({ ...story, targets: [fb, ig], media: [vertical] })).toEqual([]);
+  });
+
+  it("no exige texto ni mira su largo: la nota interna no se publica", () => {
+    const longNote = "x".repeat(2300);
+    expect(validatePostForReview({ ...story, text: longNote, targets: [fb, ig], media: [vertical] })).toEqual([]);
+  });
+
+  it("sin foto no esta lista, aunque el destino sea solo Facebook (donde una publicacion de texto si vale)", () => {
+    expect(validatePostForReview({ ...story, targets: [fb], media: [] })).toEqual(["Una historia necesita una foto: súbela en el borrador."]);
+    expect(validatePostForReview({ ...base, targets: [fb], media: [] })).toEqual([]);
+  });
+
+  it("lleva una sola foto: con mas, dice cuantas sobran", () => {
+    expect(validatePostForReview({ ...story, targets: [fb], media: [vertical, vertical] })).toEqual([
+      "Una historia lleva una sola foto y esta tiene 2. Quita la que sobra (o crea una historia por cada foto).",
+    ]);
+    expect(validatePostForReview({ ...story, targets: [fb], media: [vertical, vertical, vertical] })[0]).toMatch(/tiene 3\. Quita las 2 que sobran/);
+  });
+
+  it("Instagram solo acepta JPG en una historia; Facebook acepta PNG", () => {
+    const png = { ...vertical, mimeType: "image/png" };
+    expect(validatePostForReview({ ...story, targets: [ig], media: [png] })).toEqual([expect.stringMatching(/solo acepta fotos JPG en las historias/)]);
+    expect(validatePostForReview({ ...story, targets: [fb], media: [png] })).toEqual([]);
+  });
+
+  it("no aplica a la historia la proporcion del feed (4:5 a 1,91:1): una foto 9:16 sirve", () => {
+    expect(validatePostForReview({ ...base, targets: [ig], media: [vertical] })).toEqual([expect.stringMatching(/4:5/)]); // como publicacion normal, no
+    expect(validatePostForReview({ ...story, targets: [ig], media: [vertical] })).toEqual([]); // como historia, si
+    expect(validatePostForReview({ ...story, targets: [ig], media: [{ ...vertical, width: 100, height: 100 }] })).toEqual([]); // y sin minimo de ancho
+  });
+
+  it("los problemas de las cuentas siguen avisando igual que en una publicacion normal", () => {
+    expect(validatePostForReview({ ...story, targets: [{ ...fb, status: "EXPIRED" }, { ...ig, scopes: "ads_read,pages_manage_posts" }], media: [vertical] })).toEqual([
+      expect.stringMatching(/conexión de «Reservi» venció/),
+      expect.stringMatching(/«Reservi Oficial» no incluye el permiso instagram_content_publish/),
+    ]);
+    expect(validatePostForReview({ ...story, targets: [], media: [vertical] })).toEqual([expect.stringMatching(/Elige al menos un destino/)]);
+  });
 });

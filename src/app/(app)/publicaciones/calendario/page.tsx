@@ -59,6 +59,7 @@ export default async function CalendarPage({ searchParams }: PageProps<"/publica
     select: {
       id: true,
       text: true,
+      format: true,
       status: true,
       scheduledAt: true,
       publishedAt: true,
@@ -68,13 +69,15 @@ export default async function CalendarPage({ searchParams }: PageProps<"/publica
   });
   const unscheduled = await db.post.findMany({
     where: { status: "APPROVED", ...(brandId ? { brandId } : {}) },
-    select: { id: true, text: true, brand: { select: { name: true } } },
+    select: { id: true, text: true, format: true, brand: { select: { name: true } } },
     orderBy: { updatedAt: "desc" },
     take: 10,
   });
 
   // Cada publicacion va en el dia (de su marca) en que sale o salio.
   type Item = { id: string; time: string; text: string; status: PostStatusName; brand: string };
+  // Lo que se ve de una publicacion en el calendario: su texto; el de una historia es una nota interna (puede no haber).
+  const label = (p: { text: string; format: string }) => (p.format === "STORY" ? `Historia${p.text ? ` · ${p.text}` : ""}` : p.text);
   const byDay = new Map<string, Item[]>();
   for (const p of posts) {
     const status = p.status as PostStatusName;
@@ -83,7 +86,7 @@ export default async function CalendarPage({ searchParams }: PageProps<"/publica
     const local = formatLocalInput(when, p.brand.timezone); // "2026-10-16T09:00"
     const day = local.slice(0, 10);
     if (monthKey(day) !== month) continue;
-    byDay.set(day, [...(byDay.get(day) ?? []), { id: p.id, time: local.slice(11), text: p.text, status, brand: p.brand.name }]);
+    byDay.set(day, [...(byDay.get(day) ?? []), { id: p.id, time: local.slice(11), text: label(p), status, brand: p.brand.name }]);
   }
   for (const list of byDay.values()) list.sort((a, b) => a.time.localeCompare(b.time));
 
@@ -208,7 +211,7 @@ export default async function CalendarPage({ searchParams }: PageProps<"/publica
                   <li key={u.id}>
                     <Link href={`/publicaciones/${u.id}`} className="block rounded px-1.5 py-1 hover:bg-background">
                       <Badge tone="primary">{u.brand.name}</Badge>
-                      <span className="mt-1 line-clamp-2 block">{u.text}</span>
+                      <span className="mt-1 line-clamp-2 block">{label(u)}</span>
                     </Link>
                   </li>
                 ))}

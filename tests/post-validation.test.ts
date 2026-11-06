@@ -1,12 +1,40 @@
 import { describe, expect, it } from "vitest";
+import * as z from "zod";
 import { lengthError, postSchema, textLength } from "@/lib/post-validation";
+import { STORY_NOTE_MAX } from "@/lib/posts";
 
 const base = { brandId: "b1", text: "Hola", linkUrl: "", aiGenerated: "false", aiBrief: "" };
 
 describe("postSchema", () => {
   it("acepta un borrador valido y normaliza los vacios", () => {
     const r = postSchema.parse(base);
-    expect(r).toEqual({ brandId: "b1", text: "Hola", linkUrl: null, aiGenerated: false, aiBrief: null });
+    expect(r).toEqual({ brandId: "b1", format: "FEED", text: "Hola", linkUrl: null, aiGenerated: false, aiBrief: null });
+  });
+
+  it("el formato es FEED salvo que diga STORY (cualquier otro valor cuenta como publicacion normal)", () => {
+    expect(postSchema.parse({ ...base, format: "STORY" }).format).toBe("STORY");
+    for (const other of [undefined, "", "FEED", "story", "REEL", "otra cosa"]) {
+      expect(postSchema.parse({ ...base, format: other }).format, String(other)).toBe("FEED");
+    }
+  });
+
+  it("una historia no necesita texto (es solo una nota interna), pero una publicacion normal si", () => {
+    expect(postSchema.parse({ ...base, format: "STORY", text: "" })).toMatchObject({ format: "STORY", text: "" });
+    expect(postSchema.parse({ ...base, format: "STORY", text: undefined }).text).toBe("");
+    expect(postSchema.parse({ ...base, format: "STORY", text: "  Promo del viernes  " }).text).toBe("Promo del viernes");
+    const feed = postSchema.safeParse({ ...base, format: "FEED", text: "  " });
+    expect(feed.success).toBe(false);
+    // El error cuelga del campo «text» para que el editor lo muestre junto al cuadro de texto.
+    expect(z.flattenError(feed.error!).fieldErrors.text).toEqual(["Escribe el texto de la publicación."]);
+  });
+
+  it("la nota de una historia admite hasta 500 caracteres", () => {
+    expect(postSchema.safeParse({ ...base, format: "STORY", text: "x".repeat(STORY_NOTE_MAX) }).success).toBe(true);
+    const long = postSchema.safeParse({ ...base, format: "STORY", text: "x".repeat(STORY_NOTE_MAX + 1) });
+    expect(long.success).toBe(false);
+    expect(z.flattenError(long.error!).fieldErrors.text?.[0]).toMatch(/hasta 500 caracteres/);
+    // En una publicacion normal ese tope no existe.
+    expect(postSchema.safeParse({ ...base, format: "FEED", text: "x".repeat(STORY_NOTE_MAX + 1) }).success).toBe(true);
   });
 
   it("guarda los saltos de linea como \\n aunque el navegador los mande como \\r\\n", () => {

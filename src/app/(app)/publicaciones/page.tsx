@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { dateTimeFormat } from "@/lib/display-time";
 import { can } from "@/lib/permissions";
 import { ACCOUNT_KIND_LABELS } from "@/lib/platforms";
-import { POST_STATUSES, POST_STATUS_LABELS, POST_STATUS_TONES, type PostStatusName } from "@/lib/posts";
+import { POST_FORMAT_LABELS, POST_STATUSES, POST_STATUS_LABELS, POST_STATUS_TONES, type PostStatusName } from "@/lib/posts";
 import { PostsViewTabs } from "./posts-tabs";
 
 export const metadata: Metadata = { title: "Publicaciones" };
@@ -33,6 +33,7 @@ export default async function PostsPage({ searchParams }: PageProps<"/publicacio
       select: {
         id: true,
         text: true,
+        format: true,
         status: true,
         scheduledAt: true,
         createdAt: true,
@@ -65,9 +66,14 @@ export default async function PostsPage({ searchParams }: PageProps<"/publicacio
           <div className="flex flex-wrap items-center gap-3">
             <PostsViewTabs active="lista" />
             {can(user.role, "content.create") && (
-              <Link href="/publicaciones/nueva" className={buttonClass("primary")}>
-                Nueva publicación
-              </Link>
+              <>
+                <Link href="/publicaciones/nueva?formato=historia" className={buttonClass("secondary")}>
+                  Nueva historia
+                </Link>
+                <Link href="/publicaciones/nueva" className={buttonClass("primary")}>
+                  Nueva publicación
+                </Link>
+              </>
             )}
           </div>
         }
@@ -111,12 +117,17 @@ export default async function PostsPage({ searchParams }: PageProps<"/publicacio
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge tone={POST_STATUS_TONES[status]}>{POST_STATUS_LABELS[status]}</Badge>
                       <span className="text-sm font-medium">{p.brand.name}</span>
+                      {p.format === "STORY" && <Badge tone="neutral">{POST_FORMAT_LABELS.STORY}</Badge>}
                       {p.aiGenerated && <Badge tone="primary">IA</Badge>}
                       <span className="ml-auto text-xs text-muted">
                         {p.scheduledAt ? `Programada ${scheduledFmt(p.brand.timezone).format(p.scheduledAt)}` : `Creada ${dateFmt.format(p.createdAt)}`}
                       </span>
                     </div>
-                    <p className="mt-2 line-clamp-2 whitespace-pre-line text-sm">{p.text}</p>
+                    {p.format === "STORY" && !p.text ? (
+                      <p className="mt-2 text-sm text-muted">Historia con una foto, sin nota.</p>
+                    ) : (
+                      <p className="mt-2 line-clamp-2 whitespace-pre-line text-sm">{p.text}</p>
+                    )}
                     <p className="mt-2 text-xs text-muted">
                       {p.targets.length > 0
                         ? p.targets.map((t) => `${t.account.name} (${ACCOUNT_KIND_LABELS[t.account.kind]})`).join(" · ")

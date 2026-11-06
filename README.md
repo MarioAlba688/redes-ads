@@ -173,7 +173,7 @@ La conexión la autoriza la persona que administra las cuentas publicitarias de 
 
 | Paso | Quién | Qué pasa |
 |---|---|---|
-| Crear | Administrador, Editor | *Publicaciones → Nueva publicación*: eliges la marca, cuentas de qué quieres publicar y la IA propone opciones. Eliges una, la editas, marcas los destinos, añades **hasta 10 imágenes** (JPG o PNG, máx. 8 MB cada una; se eligen varias a la vez, los PNG se convierten solos a JPG al subirlos y se puede cambiar el orden: la primera es la portada) y guardas el **borrador**. |
+| Crear | Administrador, Editor | *Publicaciones → Nueva publicación* (o *Nueva historia*, ver «Historias» más abajo): eliges la marca, cuentas de qué quieres publicar y la IA propone opciones. Eliges una, la editas, marcas los destinos, añades **hasta 10 imágenes** (JPG o PNG, máx. 8 MB cada una; se eligen varias a la vez, los PNG se convierten solos a JPG al subirlos y se puede cambiar el orden: la primera es la portada) y guardas el **borrador**. |
 | Enviar a revisión | Administrador, Editor | La app comprueba antes todo lo que haría fallar la publicación (texto vacío o demasiado largo, destino desconectado, imagen que Instagram rechazaría). |
 | Aprobar o devolver | Administrador, Aprobador | **Aprobar** (opcionalmente con fecha y hora, que quedan programadas) o **devolver con una nota** para que el editor corrija. |
 | Programar o publicar ya | Administrador, Aprobador | Fecha y hora en la zona horaria de la marca (mínimo 2 minutos adelante). *Publicar ahora* sale en segundos. También se puede **cancelar**. |
@@ -204,7 +204,9 @@ Un rol de **Solo lectura** ve las publicaciones, el calendario y el historial, p
 
 **Varias imágenes:** hasta 10 por publicación. En Facebook se suben todas sin publicar y salen juntas en una sola publicación; en Instagram salen como **carrusel** (un contenedor por imagen y uno padre que las reúne). Los anuncios usan solo la primera imagen.
 
-**Todavía no incluye:** vídeo, historias, ni anuncios de carrusel.
+**Historias:** *Publicaciones → Nueva historia* (o el selector «¿Qué vas a publicar?» del editor, mientras es borrador). Una historia es **una sola foto** que dura 24 horas, y sigue el mismo recorrido que una publicación (borrador, revisión, aprobación, programación, publicación automática) en las páginas de Facebook y cuentas de Instagram que elijas. Meta **no deja publicar por su API el texto, el enlace ni los stickers** de una historia: sale solo la foto, así que lo que deba verse tiene que ir dentro de la imagen. Por eso el texto de una historia es solo una **nota interna** (opcional, hasta 500 caracteres) para reconocerla en las listas y el calendario. Lo ideal es una foto vertical 9:16 (p. ej. 1080 × 1920); otra proporción no se rechaza, pero se avisa de que se verá con bandas o recortada. Instagram solo acepta JPG en las historias (los PNG se convierten al subirlos). No usa permisos nuevos (`pages_manage_posts`, `instagram_content_publish`) y, como las publicaciones, Instagram descarga la foto desde la dirección pública de la app. Una historia no tiene estadísticas en la app ni se puede impulsar con un anuncio. En Facebook se sube la foto sin publicar y se crea la historia con ella (`photo_stories`); en Instagram es un contenedor `media_type=STORIES`. Probado solo con el Meta simulado; la publicación real aún no.
+
+**Todavía no incluye:** vídeo (ni en publicaciones ni en historias), ni anuncios de carrusel.
 
 ## Estadísticas de las publicaciones
 

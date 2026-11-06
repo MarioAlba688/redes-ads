@@ -37,6 +37,15 @@ export const POST_STATUS_TONES: Record<PostStatusName, "neutral" | "primary" | "
   CANCELLED: "neutral",
 };
 
+/** Formato de una publicacion: normal (texto e imagenes) o historia (una sola foto, sin texto). */
+export const POST_FORMATS = ["FEED", "STORY"] as const;
+export type PostFormatName = (typeof POST_FORMATS)[number];
+
+export const POST_FORMAT_LABELS: Record<PostFormatName, string> = { FEED: "Publicación", STORY: "Historia" };
+
+/** La nota interna de una historia (no se publica: por la API de Meta una historia sale sin texto). */
+export const STORY_NOTE_MAX = 500;
+
 /** Solo un borrador se puede editar; el resto es historia o esta en manos de otra persona. */
 export const isEditable = (status: PostStatusName) => status === "DRAFT";
 

@@ -10,13 +10,16 @@ import type { AiProviderId, EngineOption } from "@/lib/ai/catalog";
 import { maxCharsFor, PLATFORM_LABELS, POST_PLATFORMS, type PostPlatform } from "@/lib/ai/limits";
 import { textLength } from "@/lib/post-validation";
 import { ACCOUNT_KIND_LABELS } from "@/lib/platforms";
+import { POST_FORMAT_LABELS, POST_FORMATS, STORY_NOTE_MAX, type PostFormatName } from "@/lib/posts";
 
 export type ComposerTarget = { id: string; name: string; kind: "FACEBOOK_PAGE" | "INSTAGRAM_PROFILE"; handle: string | null };
 
 export type ComposerProps = {
   brand: { id: string; name: string };
   targets: ComposerTarget[];
-  post?: { id: string; text: string; linkUrl: string | null; targetIds: string[]; aiGenerated: boolean; aiBrief: string | null };
+  post?: { id: string; text: string; linkUrl: string | null; targetIds: string[]; aiGenerated: boolean; aiBrief: string | null; format: PostFormatName };
+  /** Formato con el que se abre el editor al crear una publicacion nueva (un borrador ya guardado usa el suyo). */
+  initialFormat?: PostFormatName;
   media?: MediaItem[];
   ai: {
     configured: boolean;
@@ -30,6 +33,11 @@ export type ComposerProps = {
   };
 };
 
+const FORMAT_HINTS: Record<PostFormatName, string> = {
+  FEED: "Texto con una o varias imágenes (en Instagram, un carrusel).",
+  STORY: "Una sola foto que dura 24 horas, sin texto.",
+};
+
 /** Plataforma que conviene pedirle a la IA segun donde se va a publicar. */
 function platformFor(kinds: string[]): PostPlatform {
   const fb = kinds.includes("FACEBOOK_PAGE");
@@ -39,7 +47,8 @@ function platformFor(kinds: string[]): PostPlatform {
   return "both";
 }
 
-export function Composer({ brand, targets, post, media = [], ai }: ComposerProps) {
+export function Composer({ brand, targets, post, initialFormat, media = [], ai }: ComposerProps) {
+  const [format, setFormat] = useState<PostFormatName>(post?.format ?? initialFormat ?? "FEED");
   const [text, setText] = useState(post?.text ?? "");
   const [selected, setSelected] = useState<Set<string>>(() => new Set(post ? post.targetIds : targets.map((t) => t.id)));
   const [fromAi, setFromAi] = useState(post?.aiGenerated ?? false);
@@ -62,9 +71,11 @@ export function Composer({ brand, targets, post, media = [], ai }: ComposerProps
     startTransition(() => action(data));
   };
 
+  const story = format === "STORY";
   const kinds = targets.filter((t) => selected.has(t.id)).map((t) => t.kind);
   const platform = platformOverride ?? platformFor(kinds);
-  const max = maxCharsFor(kinds);
+  // Una historia no tiene limite de la red: su "texto" es una nota interna.
+  const max = story ? STORY_NOTE_MAX : maxCharsFor(kinds);
   const len = textLength(text);
   const over = len > max;
   const e = saveState?.fieldErrors;
@@ -86,35 +97,85 @@ export function Composer({ brand, targets, post, media = [], ai }: ComposerProps
         <Card className="space-y-4 p-5">
           {post && <input type="hidden" name="id" value={post.id} />}
           <input type="hidden" name="brandId" value={brand.id} />
-          <input type="hidden" name="aiGenerated" value={String(fromAi)} />
-          <input type="hidden" name="aiBrief" value={aiBrief} />
+          <input type="hidden" name="aiGenerated" value={String(fromAi && !story)} />
+          <input type="hidden" name="aiBrief" value={story ? "" : aiBrief} />
           {saveState?.error && <Alert>{saveState.error}</Alert>}
           {saveState?.success && <Alert tone="success">{saveState.success}</Alert>}
 
-          <Field label="Texto de la publicación" htmlFor="text" errors={e?.text}>
+          <fieldset>
+            <legend className="mb-1.5 text-sm font-medium">¿Qué vas a publicar?</legend>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {POST_FORMATS.map((f) => (
+                <label
+                  key={f}
+                  className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 text-sm transition-colors ${
+                    format === f ? "border-primary bg-primary/5" : "border-border hover:bg-background"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="format"
+                    value={f}
+                    checked={format === f}
+                    onChange={() => setFormat(f)}
+                    className="mt-0.5 size-4 accent-[var(--primary)]"
+                  />
+                  <span>
+                    <span className="block font-medium">{POST_FORMAT_LABELS[f]}</span>
+                    <span className="block text-xs text-muted">{FORMAT_HINTS[f]}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {post && format !== post.format && (
+              <p className="mt-2 text-xs text-warning">Guarda los cambios para que el formato se aplique a las fotos de este borrador.</p>
+            )}
+          </fieldset>
+
+          {story && (
+            <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm leading-relaxed">
+              <p className="font-medium">Cómo salen las historias</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-muted">
+                <li>Una sola foto, mejor en vertical 9:16 (por ejemplo 1080 × 1920 píxeles).</li>
+                <li>
+                  Meta no deja publicar por la API el texto, el enlace ni los stickers de una historia: lo que quieras que se vea tiene que ir dentro de la imagen.
+                </li>
+                <li>Dura 24 horas y no tiene estadísticas en esta app.</li>
+              </ul>
+            </div>
+          )}
+
+          <Field
+            label={story ? "Nota interna (opcional)" : "Texto de la publicación"}
+            htmlFor="text"
+            hint={story ? "Solo para reconocer la historia en las listas y el calendario. No se publica." : undefined}
+            errors={e?.text}
+          >
             <Textarea
               id="text"
               name="text"
               value={text}
               onChange={(ev) => setText(ev.target.value)}
-              rows={10}
-              required
+              rows={story ? 3 : 10}
+              required={!story}
               aria-describedby="text-count"
             />
           </Field>
           <p id="text-count" className={`-mt-2 text-right text-xs tabular-nums ${over ? "font-medium text-danger" : "text-muted"}`}>
             {len.toLocaleString("es")} / {max.toLocaleString("es")} caracteres
-            {kinds.includes("INSTAGRAM_PROFILE") ? " (límite de Instagram)" : ""}
+            {!story && kinds.includes("INSTAGRAM_PROFILE") ? " (límite de Instagram)" : ""}
           </p>
 
-          <Field
-            label="Enlace (opcional)"
-            htmlFor="linkUrl"
-            hint="Solo se muestra en Facebook; en Instagram los enlaces del texto no se pueden pulsar."
-            errors={e?.linkUrl}
-          >
-            <Input id="linkUrl" name="linkUrl" type="url" defaultValue={post?.linkUrl ?? ""} placeholder="https://" />
-          </Field>
+          {!story && (
+            <Field
+              label="Enlace (opcional)"
+              htmlFor="linkUrl"
+              hint="Solo se muestra en Facebook; en Instagram los enlaces del texto no se pueden pulsar."
+              errors={e?.linkUrl}
+            >
+              <Input id="linkUrl" name="linkUrl" type="url" defaultValue={post?.linkUrl ?? ""} placeholder="https://" />
+            </Field>
+          )}
         </Card>
 
         <Card className="p-5">
@@ -158,11 +219,12 @@ export function Composer({ brand, targets, post, media = [], ai }: ComposerProps
       {/* La imagen se sube aparte (fuera del formulario): necesita que el borrador ya exista. */}
       <Card className="p-5">
         {post ? (
-          <MediaUploader postId={post.id} media={media} />
+          // Con el formato ya guardado: es el que el servidor aplica al subir (una historia admite una sola foto).
+          <MediaUploader postId={post.id} media={media} format={post.format} />
         ) : (
           <div>
-            <h2 className="font-semibold">Imagen</h2>
-            <p className="text-sm text-muted">Guarda el borrador primero y entonces podrás añadir una imagen.</p>
+            <h2 className="font-semibold">{story ? "Foto de la historia" : "Imagen"}</h2>
+            <p className="text-sm text-muted">Guarda el borrador primero y entonces podrás añadir {story ? "la foto" : "una imagen"}.</p>
           </div>
         )}
       </Card>
@@ -172,11 +234,17 @@ export function Composer({ brand, targets, post, media = [], ai }: ComposerProps
       <aside className="space-y-4">
         <Card className="p-5">
           <h2 className="font-semibold">Escribir con IA</h2>
-          <p className="mb-3 text-sm text-muted">
-            Usa la voz de <strong>{brand.name}</strong>. Cuéntale de qué quieres publicar y elige la opción que más te guste.
-          </p>
+          {story ? (
+            <p className="text-sm text-muted">
+              Las historias no llevan texto, así que aquí no se usa la IA. Si quieres texto sobre la foto, agrégalo a la imagen antes de subirla.
+            </p>
+          ) : (
+            <p className="mb-3 text-sm text-muted">
+              Usa la voz de <strong>{brand.name}</strong>. Cuéntale de qué quieres publicar y elige la opción que más te guste.
+            </p>
+          )}
 
-          {!ai.configured ? (
+          {story ? null : !ai.configured ? (
             <Alert tone="warning">
               La IA todavía no está activada.{" "}
               {ai.canManage ? (
@@ -246,7 +314,7 @@ export function Composer({ brand, targets, post, media = [], ai }: ComposerProps
           )}
         </Card>
 
-        {aiState?.posts && (
+        {!story && aiState?.posts && (
           <div className="space-y-3" aria-live="polite">
             {aiState.engine && (
               <p className="text-xs text-muted">

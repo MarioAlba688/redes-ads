@@ -3,7 +3,7 @@ import { audit } from "@/lib/audit";
 import { authorize } from "@/lib/auth/dal";
 import { db } from "@/lib/db";
 import { saveImage, deleteImage, mediaPath } from "@/lib/media";
-import { MAX_IMAGE_BYTES, MAX_IMAGES_PER_POST, readImageInfo } from "@/lib/media-format";
+import { MAX_IMAGE_BYTES, maxImagesFor, readImageInfo } from "@/lib/media-format";
 import { isSameOrigin } from "@/lib/same-origin";
 
 const fail = (status: number, error: string) => NextResponse.json({ error }, { status });
@@ -15,11 +15,17 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/posts/[
   if (!auth.ok) return fail(401, auth.error);
 
   const { id } = await ctx.params;
-  const post = await db.post.findUnique({ where: { id }, select: { status: true, _count: { select: { media: true } } } });
+  const post = await db.post.findUnique({ where: { id }, select: { status: true, format: true, _count: { select: { media: true } } } });
   if (!post) return fail(404, "Esa publicación ya no existe.");
   if (post.status !== "DRAFT") return fail(409, "Solo se pueden cambiar las imágenes de un borrador.");
-  if (post._count.media >= MAX_IMAGES_PER_POST) {
-    return fail(409, `Una publicación admite hasta ${MAX_IMAGES_PER_POST} imágenes. Quita alguna para subir otra.`);
+  const max = maxImagesFor(post.format);
+  if (post._count.media >= max) {
+    return fail(
+      409,
+      post.format === "STORY"
+        ? "Una historia lleva una sola foto. Quita la que tiene para subir otra."
+        : `Una publicación admite hasta ${max} imágenes. Quita alguna para subir otra.`,
+    );
   }
 
   // Se mira el tamano declarado antes de leer el archivo entero a memoria.

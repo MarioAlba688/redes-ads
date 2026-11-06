@@ -141,15 +141,79 @@ export async function publishToInstagram(
     token: ig.token,
     params: { creation_id: creationId },
   });
+  return { externalId: published.id, url: await instagramPermalink(ig, published.id) };
+}
 
-  let url = "https://www.instagram.com/";
+/** Enlace a lo ya publicado en Instagram. Es un extra: si no se puede leer, la publicacion ya salio igual. */
+async function instagramPermalink(ig: Account, mediaId: string): Promise<string> {
   try {
-    const info = await graphGet<{ permalink?: string }>(published.id, { token: ig.token, params: { fields: "permalink" } });
-    if (info.permalink) url = info.permalink;
+    const info = await graphGet<{ permalink?: string }>(mediaId, { token: ig.token, params: { fields: "permalink" } });
+    if (info.permalink) return info.permalink;
   } catch {
     // El enlace es un extra: la publicacion ya salio.
   }
-  return { externalId: published.id, url };
+  return "https://www.instagram.com/";
+}
+
+// ---------------------------------------------------------------------------
+// Historias (una sola foto)
+// ---------------------------------------------------------------------------
+
+/**
+ * Historia de una pagina de Facebook con una foto: la foto se sube SIN publicar (published=false) y luego se crea la
+ * historia con ella (photo_stories). Por la API una historia sale sin texto, sin enlace y sin stickers. Meta no deja
+ * usar en una historia una foto que ya salio en una publicacion: por eso siempre se sube de nuevo. Necesita
+ * pages_manage_posts y el token de la pagina.
+ */
+export async function publishStoryToFacebookPage(page: Account, image: PublishImage): Promise<PublishResult> {
+  const photo = await graphPost<{ id: string }>(`${page.externalId}/photos`, {
+    token: page.token,
+    params: { published: false },
+    file: { field: "source", bytes: image.bytes, filename: image.filename, mimeType: image.mimeType },
+  });
+  const story = await graphPost<{ success?: boolean; post_id?: string }>(`${page.externalId}/photo_stories`, {
+    token: page.token,
+    params: { photo_id: photo.id },
+  });
+  // Sin confirmacion no se reintenta solo: si la historia si salio, repetirla la duplicaria.
+  if (story.success !== true && !story.post_id) {
+    throw new PublishError("Facebook no confirmó que la historia se publicara. Revisa la página antes de volver a intentarlo.", false);
+  }
+  const externalId = story.post_id ?? photo.id;
+  return { externalId, url: await facebookStoryUrl(page, externalId) };
+}
+
+/** Enlace a la historia en Facebook, si Meta la lista; si no, la pagina. Solo se acepta una direccion de facebook.com. */
+async function facebookStoryUrl(page: Account, postId: string): Promise<string> {
+  try {
+    const list = await graphGet<{ data?: { post_id?: string; url?: string }[] }>(`${page.externalId}/stories`, {
+      token: page.token,
+      params: { fields: "post_id,url", limit: 25 },
+    });
+    const url = list.data?.find((s) => s.post_id === postId)?.url;
+    if (url && /^https:\/\/([a-z0-9-]+\.)*facebook\.com\//i.test(url)) return url;
+  } catch {
+    // El enlace es un extra: la historia ya salio.
+  }
+  return `https://www.facebook.com/${page.externalId}`;
+}
+
+/**
+ * Historia de Instagram con una foto: igual que una publicacion (contenedor con la URL publica de la imagen, espera a
+ * que Meta la procese y se publica) pero con media_type=STORIES y sin pie de foto. Necesita instagram_content_publish
+ * y una cuenta profesional.
+ */
+export async function publishStoryToInstagram(ig: Account, image: PublishImage, opts: { pollMs?: number } = {}): Promise<PublishResult> {
+  const container = await graphPost<{ id: string }>(`${ig.externalId}/media`, {
+    token: ig.token,
+    params: { image_url: image.publicUrl, media_type: "STORIES" },
+  });
+  await waitForContainer(ig, container.id, opts.pollMs ?? 2000, "la foto de la historia");
+  const published = await graphPost<{ id: string }>(`${ig.externalId}/media_publish`, {
+    token: ig.token,
+    params: { creation_id: container.id },
+  });
+  return { externalId: published.id, url: await instagramPermalink(ig, published.id) };
 }
 
 /**

@@ -223,13 +223,20 @@ enum PostStatus {
   CANCELLED // cancelada
 }
 
+// Formato de una publicacion: lo que se publica en cada destino.
+enum PostFormat {
+  FEED // publicacion normal: texto y una o varias imagenes
+  STORY // historia: una sola foto, sin texto ni enlace (por la API de Meta no admiten pie, enlaces ni stickers)
+}
+
 model Post {
   id           String     @id @default(cuid())
   brandId      String
   brand        Brand      @relation(fields: [brandId], references: [id], onDelete: Restrict)
-  // Texto final tal como saldra, hashtags incluidos.
+  // Texto final tal como saldra, hashtags incluidos. En una historia es solo una nota interna (no se publica).
   text         String     @db.Text
   linkUrl      String?    @db.VarChar(500)
+  format       PostFormat @default(FEED)
   status       PostStatus @default(DRAFT)
   // Momento de publicacion (UTC). Solo tiene sentido en SCHEDULED.
   scheduledAt  DateTime?

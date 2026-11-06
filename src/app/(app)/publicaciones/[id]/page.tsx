@@ -12,10 +12,12 @@ import { can } from "@/lib/permissions";
 import { ACCOUNT_KIND_LABELS } from "@/lib/platforms";
 import { availableActions } from "@/lib/post-workflow";
 import {
+  POST_FORMAT_LABELS,
   POST_STATUS_LABELS,
   POST_STATUS_TONES,
   TARGET_STATUS_LABELS,
   isEditable,
+  type PostFormatName,
   type PostStatusName,
 } from "@/lib/posts";
 import { interactions } from "@/lib/stats/metrics";
@@ -72,6 +74,8 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
   if (!post) notFound();
 
   const status = post.status as PostStatusName;
+  const format = post.format as PostFormatName;
+  const story = format === "STORY";
   const canWrite = can(user.role, "content.create");
   // Imagenes que la base de datos conoce pero cuyo archivo ya no esta en este servidor (redespliegue sin volumen, o otra copia de la app).
   const missingMedia = new Set((await Promise.all(post.media.map(async (m) => ((await imageExists(m.storageKey)) ? null : m.id)))).filter((x): x is string => x !== null));
@@ -93,7 +97,12 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
       <PageHeader
         title={post.brand.name}
         description={`Creada ${dateFmt.format(post.createdAt)}${post.createdBy ? ` por ${post.createdBy.name}` : ""}`}
-        action={<Badge tone={POST_STATUS_TONES[status]}>{POST_STATUS_LABELS[status]}</Badge>}
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            {story && <Badge tone="neutral">{POST_FORMAT_LABELS.STORY}</Badge>}
+            <Badge tone={POST_STATUS_TONES[status]}>{POST_STATUS_LABELS[status]}</Badge>
+          </div>
+        }
       />
       {q.guardada && (
         <div className="mb-4">
@@ -175,6 +184,7 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
             targetIds: post.targets.map((t) => t.account.id),
             aiGenerated: post.aiGenerated,
             aiBrief: post.aiBrief,
+            format,
           }}
           media={post.media.map((m) => ({ id: m.id, url: mediaPath(m.storageKey), width: m.width, height: m.height, name: m.originalName, missing: missingMedia.has(m.id) }))}
           ai={{ ...ai, canManage: can(user.role, "ai.manage") }}
@@ -195,7 +205,19 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
     <>
       {header}
       <Card className="space-y-5 p-5">
-        <p className="whitespace-pre-wrap text-sm">{post.text}</p>
+        {story ? (
+          <p className="text-sm text-muted">
+            Historia: una foto que dura 24 horas. Sale sin texto ni enlace.
+            {post.text && (
+              <>
+                {" "}
+                Nota interna: <span className="whitespace-pre-wrap text-foreground">{post.text}</span>
+              </>
+            )}
+          </p>
+        ) : (
+          <p className="whitespace-pre-wrap text-sm">{post.text}</p>
+        )}
         {post.media.length > 0 && (
           <div className="flex flex-wrap items-start gap-3">
             {post.media.map((m, i) =>
@@ -206,12 +228,12 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
               ) : (
                 // Imagen dinamica servida por nuestra ruta /media: next/image no aporta nada aqui.
                 // eslint-disable-next-line @next/next/no-img-element
-                <img key={m.id} src={mediaPath(m.storageKey)} alt={post.media.length > 1 ? `Imagen ${i + 1} de ${post.media.length} de la publicación` : "Imagen de la publicación"} className="max-h-72 max-w-full rounded-lg border border-border" />
+                <img key={m.id} src={mediaPath(m.storageKey)} alt={story ? "Foto de la historia" : post.media.length > 1 ? `Imagen ${i + 1} de ${post.media.length} de la publicación` : "Imagen de la publicación"} className="max-h-72 max-w-full rounded-lg border border-border" />
               ),
             )}
           </div>
         )}
-        {post.media.length > 1 && <p className="-mt-3 text-xs text-muted">{post.media.length} imágenes: en Facebook salen juntas y en Instagram como carrusel.</p>}
+        {!story && post.media.length > 1 && <p className="-mt-3 text-xs text-muted">{post.media.length} imágenes: en Facebook salen juntas y en Instagram como carrusel.</p>}
         {post.linkUrl && (
           <p className="text-sm">
             <span className="text-muted">Enlace: </span>
@@ -257,7 +279,10 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
                       Ver publicación
                     </a>
                   )}
-                  {t.status === "PUBLISHED" && (
+                  {t.status === "PUBLISHED" && story && (
+                    <span className="basis-full text-xs text-muted">Las historias duran 24 horas: no tienen estadísticas ni se pueden impulsar con un anuncio.</span>
+                  )}
+                  {t.status === "PUBLISHED" && !story && (
                     <span className="basis-full text-xs text-muted">
                       {t.metrics && interactions(t.metrics) !== null ? (
                         <>

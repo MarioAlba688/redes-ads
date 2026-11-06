@@ -431,6 +431,14 @@ try {
   check("el manual tiene todas sus secciones con ancla", ["requisitos", "instagram", "crear-app", "servidor", "conectar", "marcas", "publicar-instagram", "permisos", "problemas"].every((id) => ids.includes(id)), ids.join());
   check("cada enlace del índice apunta a una sección que existe", (await page.locator('nav[aria-label="En esta guía"] a').evaluateAll((as, found) => as.every((a) => found.includes(a.getAttribute("href").slice(1))), ids)));
   const manual = norm(await page.locator("main").innerText());
+  check(
+    "el manual explica las historias (una sola foto, sin texto ni enlace) con su mensaje de error y está en su índice",
+    ids.includes("historias") &&
+      (await page.locator('nav[aria-label="En esta guía"] a[href="#historias"]').count()) === 1 &&
+      manual.includes("una sola foto que dura 24 horas") &&
+      manual.includes("dentro de la imagen") &&
+      manual.includes("Facebook no confirmó que la historia se publicara"),
+  );
   check("«Tu estado ahora» (solo administradores) lista lo que ve la app: app configurada, páginas, Instagram y permisos", manual.includes("Tu estado ahora") && manual.includes("La app de Meta está configurada en el servidor") && /15 página\(s\) de Facebook conectada\(s\)/.test(manual) && /5 cuenta\(s\) de Instagram conectada\(s\)/.test(manual) && manual.includes("Las cuentas conectadas tienen permiso para publicar"));
   const stepLinks = await page.getByRole("link", { name: "Ver el paso" }).evaluateAll((as) => as.map((a) => a.getAttribute("href")));
   check("con la app en localhost avisa que Instagram aún no puede descargar las imágenes, y lleva al paso", manual.includes("Instagram no podrá descargar las imágenes todavía") && stepLinks.includes("#publicar-instagram"), `enlaces: ${stepLinks.join()}`);

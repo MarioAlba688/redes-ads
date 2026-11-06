@@ -128,13 +128,13 @@ const mediaFiles = () => fs.readdirSync(MEDIA_DIR);
 let counter = 0;
 
 /** Crea una publicacion directamente en la base (para no repetir el editor en cada caso). */
-async function makePost({ brand = BRAND_RES, status = "DRAFT", text, link = null, scheduled = null, published = null, targets = ["acc-fb-reservi"], targetStatus = "PENDING", locked = null, image = null, by = USERS.edgar.id }) {
+async function makePost({ brand = BRAND_RES, status = "DRAFT", text, link = null, scheduled = null, published = null, targets = ["acc-fb-reservi"], targetStatus = "PENDING", locked = null, image = null, by = USERS.edgar.id, format = "FEED" }) {
   const id = `post-${String(++counter).padStart(4, "0")}`;
   text ??= `Prueba ${id} ${tag()}`;
   // La fecha se pone al final: con el worker corriendo, una publicacion vencida a medio crear se publicaria incompleta.
   await db.sql(
-    "INSERT INTO Post (id, brandId, text, linkUrl, status, scheduledAt, publishedAt, createdById, aiGenerated, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, 0, NOW(3), NOW(3))",
-    [id, brand, text, link, status, by],
+    "INSERT INTO Post (id, brandId, text, linkUrl, format, status, scheduledAt, publishedAt, createdById, aiGenerated, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, 0, NOW(3), NOW(3))",
+    [id, brand, text, link, format, status, by],
   );
   for (const acc of targets) {
     await db.sql(`INSERT INTO PostTarget (id, postId, accountId, status, attempts, lockedAt) VALUES (?, ?, ?, ?, 0, ${locked ?? "NULL"})`, [`${id}-${acc}`, id, acc, targetStatus]);
@@ -557,6 +557,136 @@ try {
   const cancelledD = await makePost({ status: "CANCELLED", targets: ["acc-fb-reservi"] });
   await edgar.goto(`${APP}/publicaciones/${cancelledD.id}`);
   check("una cancelada sí se puede borrar", (await edgar.getByRole("button", { name: "Borrar" }).count()) === 1);
+
+  // ------------------------------------------------------------ 3d. historias: una sola foto, sin texto, en Facebook e Instagram
+  calm();
+  await edgar.goto(`${APP}/publicaciones`);
+  check(
+    "la lista ofrece «Nueva historia» además de «Nueva publicación»",
+    (await edgar.getByRole("link", { name: "Nueva historia" }).getAttribute("href")) === "/publicaciones/nueva?formato=historia" && (await edgar.getByRole("link", { name: "Nueva publicación" }).count()) === 1,
+  );
+  await edgar.goto(`${APP}/publicaciones/nueva?formato=historia`);
+  check("al elegir la marca de una historia, el formato se conserva en el enlace", (await edgar.locator(`a[href="/publicaciones/nueva?marca=${BRAND_RES}&formato=historia"]`).count()) === 1);
+  await edgar.goto(`${APP}/publicaciones/nueva?marca=${BRAND_RES}&formato=historia`);
+  check("el editor abre con «Historia» elegida: nota interna opcional, sin enlace y sin IA", (await edgar.getByRole("radio", { name: /Historia/ }).isChecked()) && (await edgar.getByLabel("Nota interna (opcional)").count()) === 1 && (await edgar.locator("#linkUrl").count()) === 0 && (await edgar.getByText(/Las historias no llevan texto/).count()) === 1);
+  await shot(edgar, "historia-editor-nueva.png");
+
+  // Se guarda sin escribir nada: una historia no necesita texto.
+  await edgar.getByRole("button", { name: "Guardar borrador" }).click();
+  await edgar.waitForURL(/\/publicaciones\/[^/]+\?guardada=1/);
+  const storyId = edgar.url().match(/publicaciones\/([^/?]+)/)[1];
+  const storyDraft = (await db.sql("SELECT format, text, linkUrl FROM Post WHERE id=?", [storyId]))[0];
+  check("una historia se guarda sin texto ni enlace, con el formato Historia y sus 2 destinos", storyDraft?.format === "STORY" && storyDraft.text === "" && storyDraft.linkUrl === null && (await targetsOf(storyId)).length === 2);
+  check("al guardarla, el editor ofrece una sola foto (sin elegir varias)", (await edgar.getByRole("heading", { name: "Foto de la historia" }).count()) === 1 && (await edgar.locator("#media-file").getAttribute("multiple")) === null);
+
+  await edgar.getByRole("button", { name: "Enviar a revisión" }).click();
+  await edgar.getByText("Una historia necesita una foto: súbela en el borrador.").waitFor();
+  check("sin foto, la historia no pasa a revisión y dice que falta la foto", (await postRow(storyId)).status === "DRAFT");
+
+  const storyJpg = jpeg(1080, 1920);
+  await edgar.locator("#media-file").setInputFiles(file("historia.jpg", "image/jpeg", storyJpg));
+  await edgar.getByAltText("Foto de la historia").waitFor();
+  const storyMedia = await db.sql("SELECT storageKey, width, height FROM PostMedia WHERE postId=?", [storyId]);
+  check("la foto vertical 9:16 se guarda tal cual y no genera aviso de proporción", storyMedia.length === 1 && storyMedia[0].width === 1080 && storyMedia[0].height === 1920 && sha(fs.readFileSync(path.join(MEDIA_DIR, storyMedia[0].storageKey))) === sha(storyJpg) && (await edgar.getByText(/se verá con bandas o recortada/).count()) === 0);
+  const second = await edgarCtx.request.post(`${APP}/api/posts/${storyId}/media`, { multipart: { file: file("otra.jpg", "image/jpeg", jpeg(1080, 1920)) }, headers: { origin: APP } });
+  check("una historia no admite una segunda foto: la subida se rechaza y explica por qué", second.status() === 409 && /una sola foto/.test((await second.json()).error));
+  await edgar.reload();
+  check("y la pantalla ya no ofrece subir más fotos", (await edgar.locator("#media-file").count()) === 0 && (await edgar.getByText(/La historia ya tiene su foto/).count()) === 1);
+  await shot(edgar, "historia-borrador.png");
+
+  await edgar.getByRole("button", { name: "Enviar a revisión" }).click();
+  check("con su foto, la historia pasa a revisión sin necesitar texto", await waitFor(async () => ((await postRow(storyId)).status === "IN_REVIEW" ? true : null), { timeout: 15_000 }));
+  await aura.goto(`${APP}/publicaciones/${storyId}`);
+  check("quien aprueba ve la etiqueta Historia, la foto y que sale sin texto ni enlace", (await aura.getByText("Historia", { exact: true }).count()) >= 1 && (await aura.getByAltText("Foto de la historia").isVisible()) && (await aura.getByText(/Sale sin texto ni enlace/).count()) === 1);
+
+  // Una foto que no es vertical no se rechaza: se avisa de cómo se verá.
+  const squareStory = await makePost({ format: "STORY", text: "", status: "DRAFT", targets: ["acc-fb-reservi"] });
+  await addImages(squareStory.id, 1, { w: 1080, h: 1080 });
+  await edgar.goto(`${APP}/publicaciones/${squareStory.id}`);
+  check("una foto cuadrada avisa que en la historia se verá con bandas o recortada", (await edgar.getByText(/Esta foto mide 1080 × 1080 píxeles/).count()) === 1 && (await edgar.getByText(/se verá con bandas o recortada/).count()) >= 1);
+  await edgar.getByRole("button", { name: "Enviar a revisión" }).click();
+  check("pero no impide enviarla a revisión", await waitFor(async () => ((await postRow(squareStory.id)).status === "IN_REVIEW" ? true : null), { timeout: 15_000 }));
+
+  // Pasar a historia un borrador con varias fotos no quita fotos a escondidas.
+  const twoPics = await makePost({ status: "DRAFT", targets: ["acc-fb-reservi"] });
+  await addImages(twoPics.id, 2);
+  await edgar.goto(`${APP}/publicaciones/${twoPics.id}`);
+  await edgar.getByRole("radio", { name: /Historia/ }).check();
+  await edgar.getByRole("button", { name: "Guardar cambios" }).click();
+  await edgar.getByText(/Quita las que sobran antes de cambiarlo a historia/).waitFor();
+  check("pasar a historia un borrador con 2 fotos se rechaza y pide quitar la que sobra", (await db.sql("SELECT format FROM Post WHERE id=?", [twoPics.id]))[0].format === "FEED");
+  await edgar.getByRole("button", { name: "Quitar imagen 2" }).click();
+  await waitFor(async () => Number((await db.sql("SELECT COUNT(*) c FROM PostMedia WHERE postId=?", [twoPics.id]))[0].c) === 1, { timeout: 15_000 });
+  await edgar.getByRole("button", { name: "Guardar cambios" }).click();
+  check("con una sola foto, el borrador pasa a historia (sin enlace ni IA)", await waitFor(async () => ((await db.sql("SELECT format, linkUrl, aiGenerated FROM Post WHERE id=?", [twoPics.id]))[0].format === "STORY" ? true : null), { timeout: 15_000 }));
+
+  // El worker publica la historia en Facebook (foto sin publicar + photo_stories) y en Instagram (contenedor STORIES).
+  const published3 = fake.published().length;
+  await db.sql(`UPDATE Post SET status='SCHEDULED', scheduledAt = ${inMinutes(-1)} WHERE id=?`, [storyId]);
+  check("al llegar la hora, el worker publica la historia en los 2 destinos", await waitPost(storyId, ["PUBLISHED"]));
+  const sentS = fake.published().slice(published3);
+  const fbUnpub = sentS.find((p) => p.kind === "photo-unpublished" && p.account === "P-1");
+  const fbStory = sentS.find((p) => p.kind === "fb-story");
+  check("Facebook recibió la foto SIN publicar, idéntica a la subida, y con ella creó la historia", !!fbUnpub && fbUnpub.sha256 === sha(storyJpg) && fbStory?.photoId === fbUnpub.id && fbStory.sha256 === sha(storyJpg));
+  check("la historia de Facebook no lleva mensaje, pie ni enlace: solo la foto", fbStory?.fields.join() === "photo_id" && fbUnpub?.caption === null);
+  check("y en la página no salió ninguna publicación normal ni foto suelta", !sentS.some((p) => p.account === "P-1" && (p.kind === "photo" || p.kind === "feed")));
+  const igStory = sentS.find((p) => p.kind === "ig-story");
+  check("Instagram recibió un contenedor de historia con la URL pública de la foto, descargable sin sesión y sin pie", igStory?.imageUrl === `http://127.0.0.1:${APP_PORT}/media/${storyMedia[0].storageKey}` && igStory.fetched.status === 200 && igStory.fetched.sha256 === sha(storyJpg) && igStory.caption === null);
+  check("y se publicó ese contenedor como historia, no como publicación ni carrusel", sentS.some((p) => p.kind === "ig-publish" && p.creation === igStory.id && p.story === true) && !sentS.some((p) => p.kind === "ig-container" || p.kind === "ig-carousel"));
+  const storyTargets = await targetsOf(storyId);
+  const fbTarget = storyTargets.find((t) => t.accountId === "acc-fb-reservi");
+  const igTarget = storyTargets.find((t) => t.accountId === "acc-ig-reservi");
+  check(
+    "cada destino quedó publicado en el primer intento, con el enlace de su historia",
+    storyTargets.length === 2 && storyTargets.every((t) => t.status === "PUBLISHED" && t.attempts === 1 && t.error === null) && fbTarget.externalUrl.startsWith("https://www.facebook.com/stories/P-1/") && igTarget.externalUrl.startsWith("https://www.instagram.com/stories/mimarca/"),
+    JSON.stringify(storyTargets.map((t) => t.externalUrl)),
+  );
+
+  // Si Meta no lista las historias de la página, la historia cuenta igual como publicada y el enlace es el de la página.
+  fake.setScenario({ storiesList: "fail" });
+  const storyNoList = await makePost({ format: "STORY", text: "", status: "DRAFT", targets: ["acc-fb-reservi"], image: "jpg" });
+  await db.sql(`UPDATE Post SET status='SCHEDULED', scheduledAt = ${inMinutes(-1)} WHERE id=?`, [storyNoList.id]);
+  check("si Meta no lista las historias, la de Facebook sale igual y enlaza a la página", (await waitPost(storyNoList.id, ["PUBLISHED"])) && (await targetsOf(storyNoList.id))[0].externalUrl === "https://www.facebook.com/P-1");
+  calm();
+  fake.setScenario({ storiesList: "ok" });
+
+  // La ficha de la publicada: etiqueta, enlaces, sin estadísticas ni impulso (el administrador sí puede impulsar una normal).
+  await admin.goto(`${APP}/publicaciones/${mainId}`);
+  const boostLinks = await admin.getByRole("link", { name: "Impulsar con un anuncio" }).count();
+  await admin.goto(`${APP}/publicaciones/${storyId}`);
+  check(
+    "la ficha de la historia publicada muestra sus 2 enlaces y dice que no tiene estadísticas ni impulso, mientras una publicación normal sí lo ofrece",
+    boostLinks === 2 && (await admin.getByRole("link", { name: "Ver publicación" }).count()) === 2 && (await admin.getByText(/Las historias duran 24 horas/).count()) === 2 && (await admin.getByRole("link", { name: "Impulsar con un anuncio" }).count()) === 0,
+  );
+  await shot(admin, "historia-publicada.png");
+  await edgar.goto(`${APP}/publicaciones`);
+  check("la lista marca la historia con su etiqueta y no inventa texto", (await edgar.locator("li", { hasText: "Historia con una foto, sin nota." }).first().getByText("Historia", { exact: true }).count()) >= 1);
+
+  // Una historia dura 24 horas: el proceso en segundo plano no lee sus estadísticas.
+  await sleep(3500);
+  check(
+    "el worker no lee estadísticas de una historia (aunque es lo más reciente) ni llama a Meta por sus cifras",
+    Number((await db.sql("SELECT COUNT(*) c FROM PostTargetMetrics WHERE targetId IN (SELECT id FROM PostTarget WHERE postId=?)", [storyId]))[0].c) === 0 &&
+      !fake.requests().some((r) => r.path === fbTarget.externalId || r.path === `${fbTarget.externalId}/insights` || r.path === `${igTarget.externalId}/insights`),
+  );
+
+  // Si Instagram rechaza la foto de la historia: falla sin publicar, sin reintento y con el motivo en español.
+  const storyBad = await makePost({ format: "STORY", text: "", status: "DRAFT", targets: ["acc-ig-reservi"], image: "jpg" });
+  fake.setScenario({ igContainer: "error" });
+  const published4 = fake.published().length;
+  await db.sql(`UPDATE Post SET status='SCHEDULED', scheduledAt = ${inMinutes(-1)} WHERE id=?`, [storyBad.id]);
+  check("si Instagram rechaza la foto de la historia, la publicación falla", await waitPost(storyBad.id, ["FAILED"]));
+  const storyBadTarget = (await targetsOf(storyBad.id))[0];
+  check("sin reintento y con el motivo en español", storyBadTarget.attempts === 1 && /rechazó la foto de la historia/.test(storyBadTarget.error ?? ""), String(storyBadTarget.error));
+  check("y no se publicó nada en Instagram", !fake.published().slice(published4).some((p) => p.kind === "ig-publish"));
+  calm();
+
+  // Una historia con una foto PNG: Facebook la acepta; para Instagram hay que convertirla a JPG antes de revisarla.
+  const storyPng = await makePost({ format: "STORY", text: "", status: "DRAFT", targets: ["acc-fb-reservi", "acc-ig-reservi"], image: "png" });
+  await edgar.goto(`${APP}/publicaciones/${storyPng.id}`);
+  await edgar.getByRole("button", { name: "Enviar a revisión" }).click();
+  await edgar.getByText(/Instagram solo acepta fotos JPG en las historias/).waitFor();
+  check("una foto PNG en una historia con Instagram no pasa a revisión y se explica", (await postRow(storyPng.id)).status === "DRAFT");
 
   // ------------------------------------------------------------ 4. «publicar ahora» y choque entre procesos
   // A (con worker) y B (sin worker, pero que publica al pulsar el botón) compiten por las mismas filas.

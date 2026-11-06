@@ -37,6 +37,7 @@ function load(id: string) {
       id: true,
       status: true,
       text: true,
+      format: true,
       brandId: true,
       brand: { select: { timezone: true } },
       targets: { select: { id: true, status: true, account: { select: { name: true, kind: true, status: true, brandId: true, scopes: true } } } },
@@ -49,6 +50,7 @@ function load(id: string) {
 function problems(post: Loaded): string | null {
   const errors = validatePostForReview({
     text: post.text,
+    format: post.format,
     brandId: post.brandId,
     targets: post.targets.map((t) => ({ name: t.account.name, kind: t.account.kind, status: t.account.status, brandId: t.account.brandId, scopes: t.account.scopes })),
     media: post.media,

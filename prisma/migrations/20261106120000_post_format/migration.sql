@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `Post` ADD COLUMN `format` ENUM('FEED', 'STORY') NOT NULL DEFAULT 'FEED';

@@ -11,9 +11,12 @@ import {
   MAX_PUBLISH_ATTEMPTS,
   PublishError,
   publicMediaUrl,
+  publishStoryToFacebookPage,
+  publishStoryToInstagram,
   publishToFacebookPage,
   publishToInstagram,
   type PublishImage,
+  type PublishResult,
 } from "@/lib/meta/publish";
 import { missingPublishScope, missingScopeMessage } from "@/lib/meta/scopes";
 import { derivePostStatus, isTerminal } from "@/lib/publishing/status";
@@ -70,7 +73,7 @@ async function publishOne(targetId: string, now: Date): Promise<Outcome> {
     where: { id: targetId },
     include: {
       account: { select: { id: true, name: true, kind: true, externalId: true, status: true, accessTokenEnc: true, scopes: true } },
-      post: { select: { id: true, text: true, linkUrl: true, status: true, media: { orderBy: { position: "asc" } } } },
+      post: { select: { id: true, text: true, linkUrl: true, format: true, status: true, media: { orderBy: { position: "asc" } } } },
     },
   });
   if (!target) return "failed";
@@ -116,10 +119,17 @@ async function publishOne(targetId: string, now: Date): Promise<Outcome> {
       });
     }
 
-    const input = { text: target.post.text, linkUrl: target.post.linkUrl, images };
     const account = { externalId: target.account.externalId, token };
-    const result =
-      target.account.kind === "INSTAGRAM_PROFILE" ? await publishToInstagram(account, input) : await publishToFacebookPage(account, input);
+    const instagram = target.account.kind === "INSTAGRAM_PROFILE";
+    let result: PublishResult;
+    if (target.post.format === "STORY") {
+      // Una historia es una sola foto y sale sin texto ni enlace (el "texto" de la publicacion es solo una nota interna).
+      if (images.length !== 1) throw new PublishError("Una historia lleva una sola foto y esta no tiene exactamente una.", false);
+      result = instagram ? await publishStoryToInstagram(account, images[0]) : await publishStoryToFacebookPage(account, images[0]);
+    } else {
+      const input = { text: target.post.text, linkUrl: target.post.linkUrl, images };
+      result = instagram ? await publishToInstagram(account, input) : await publishToFacebookPage(account, input);
+    }
 
     await db.postTarget.update({
       where: { id: targetId },

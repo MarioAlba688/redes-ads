@@ -76,12 +76,12 @@ const MEDIA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "redes-e2e-stats-media-"
 let counter = 0;
 
 /** Crea una publicacion ya publicada (con sus destinos) directamente en la base. */
-async function makePublished({ brand = BRAND_RES, text, ageMinutes, targets, image = false }) {
+async function makePublished({ brand = BRAND_RES, text, ageMinutes, targets, image = false, format = "FEED" }) {
   const id = `post-${String(++counter).padStart(4, "0")}`;
   text ??= `Publicada ${id} ${tag()}`;
   await db.sql(
-    `INSERT INTO Post (id, brandId, text, status, publishedAt, createdById, aiGenerated, createdAt, updatedAt) VALUES (?, ?, ?, 'PUBLISHED', ${minutesAgo(ageMinutes)}, ?, 0, NOW(3), NOW(3))`,
-    [id, brand, text, USERS.edgar.id],
+    `INSERT INTO Post (id, brandId, text, format, status, publishedAt, createdById, aiGenerated, createdAt, updatedAt) VALUES (?, ?, ?, ?, 'PUBLISHED', ${minutesAgo(ageMinutes)}, ?, 0, NOW(3), NOW(3))`,
+    [id, brand, text, format, USERS.edgar.id],
   );
   if (image) {
     const storageKey = `${randomBytes(24).toString("hex")}.jpg`;
@@ -224,8 +224,10 @@ try {
   const pOld = await makePublished({ text: `Publicación antigua ${tag()}`, ageMinutes: 120 * 24 * HOURS, targets: [{ account: "acc-fb-reservi", externalId: "P-1_5" }] });
   await db.sql("INSERT INTO Post (id, brandId, text, status, createdById, aiGenerated, createdAt, updatedAt) VALUES ('post-borrador', ?, 'Solo un borrador', 'DRAFT', ?, 0, NOW(3), NOW(3))", [BRAND_RES, USERS.edgar.id]);
   await db.sql("INSERT INTO PostTarget (id, postId, accountId, status, attempts, error) VALUES ('t-fallido', 'post-borrador', 'acc-fb-reservi', 'FAILED', 1, 'x')");
+  // Una historia publicada (la mas reciente de todas): dura 24 horas, asi que no se lee ni se muestra.
+  const pStory = await makePublished({ text: "", format: "STORY", ageMinutes: 30, targets: [{ account: "acc-fb-reservi", externalId: "P-1_55" }] });
 
-  const t = { fb1: p1.targets["acc-fb-reservi"], ig1: p1.targets["acc-ig-reservi"], fb2: p2.targets["acc-fb-reservi"], fb3: p3.targets["acc-fb-smartec"], old: pOld.targets["acc-fb-reservi"] };
+  const t = { fb1: p1.targets["acc-fb-reservi"], ig1: p1.targets["acc-ig-reservi"], fb2: p2.targets["acc-fb-reservi"], fb3: p3.targets["acc-fb-smartec"], old: pOld.targets["acc-fb-reservi"], story: pStory.targets["acc-fb-reservi"] };
   const read = await Promise.all([t.fb1, t.ig1, t.fb2, t.fb3].map((id) => waitMetrics(id)));
   check("el worker leyó las 4 publicaciones recientes sin que nadie lo pidiera", read.every(Boolean));
 
@@ -236,6 +238,7 @@ try {
   check("sin avisos cuando Meta entrega todo", read.every((m) => m.note === null));
 
   check("la antigua (120 días), el destino fallido y el borrador no se leen", (await metricsOf(t.old)) === null && (await metricsOf("t-fallido")) === null);
+  check("una historia publicada (la más reciente) tampoco se lee ni se consulta a Meta por ella", (await metricsOf(t.story)) === null && statsCalls((r) => r.path.startsWith("P-1_55")).length === 0);
   // Calendario de relecturas: cada 3 h los primeros 2 dias, cada 12 h hasta las dos semanas.
   check("la de hace 2 h se volverá a leer en ~3 h", read[0].nextIn >= 178 && read[0].nextIn <= 180, String(read[0].nextIn));
   check("la de hace 3 días, en ~12 h; la de hace 10 días también", read[2].nextIn >= 718 && read[2].nextIn <= 720 && read[3].nextIn >= 718 && read[3].nextIn <= 720, `${read[2].nextIn} / ${read[3].nextIn}`);

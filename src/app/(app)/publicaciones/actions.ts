@@ -12,6 +12,7 @@ import type { AiActionState } from "@/lib/ai/types";
 import { db } from "@/lib/db";
 import { formValues, type FormState } from "@/lib/form-state";
 import { deleteImage } from "@/lib/media";
+import { MAX_IMAGES_PER_STORY } from "@/lib/media-format";
 import { lengthError, postSchema } from "@/lib/post-validation";
 import { PUBLISHABLE_KINDS } from "@/lib/posts";
 
@@ -118,22 +119,25 @@ export async function createDraft(_prev: FormState, formData: FormData): Promise
   }
   const targets = await resolveTargets(data.brandId, targetIds);
   if (!targets.ok) return { error: targets.error, values };
-  const tooLong = lengthError(data.text, targets.kinds);
+  // Una historia sale sin texto: su "texto" es una nota interna, sin limite de la red, sin enlace y sin IA.
+  const story = data.format === "STORY";
+  const tooLong = story ? null : lengthError(data.text, targets.kinds);
   if (tooLong) return { fieldErrors: { text: [tooLong] }, values };
 
   const post = await db.post.create({
     data: {
       brandId: data.brandId,
+      format: data.format,
       text: data.text,
-      linkUrl: data.linkUrl,
-      aiGenerated: data.aiGenerated,
-      aiBrief: data.aiGenerated ? data.aiBrief : null,
+      linkUrl: story ? null : data.linkUrl,
+      aiGenerated: story ? false : data.aiGenerated,
+      aiBrief: !story && data.aiGenerated ? data.aiBrief : null,
       createdById: auth.user.id,
       targets: { create: targetIds.map((accountId) => ({ accountId })) },
     },
     select: { id: true },
   });
-  await audit("post.created", { userId: auth.user.id, target: post.id, detail: { ai: data.aiGenerated, targets: targetIds.length } });
+  await audit("post.created", { userId: auth.user.id, target: post.id, detail: { format: data.format, ai: data.aiGenerated && !story, targets: targetIds.length } });
   revalidatePath("/publicaciones");
   redirect(`/publicaciones/${post.id}?guardada=1`);
 }
@@ -148,14 +152,22 @@ export async function updateDraft(_prev: FormState, formData: FormData): Promise
   if (!parsed.success) return { fieldErrors: z.flattenError(parsed.error).fieldErrors, values };
   const data = parsed.data;
 
-  const existing = await db.post.findUnique({ where: { id: id.data }, select: { status: true, brandId: true } });
+  const existing = await db.post.findUnique({ where: { id: id.data }, select: { status: true, brandId: true, _count: { select: { media: true } } } });
   if (!existing) return { error: "Esa publicación ya no existe.", values };
   if (existing.status !== "DRAFT") return { error: "Solo se puede editar un borrador.", values };
   if (existing.brandId !== data.brandId) return { error: "No se puede cambiar la marca de una publicación.", values };
 
+  const story = data.format === "STORY";
+  // Al pasar un borrador a historia no se quitan fotos a escondidas: se pide que lo haga la persona.
+  if (story && existing._count.media > MAX_IMAGES_PER_STORY) {
+    return {
+      error: `Una historia lleva una sola foto y este borrador tiene ${existing._count.media}. Quita las que sobran antes de cambiarlo a historia.`,
+      values,
+    };
+  }
   const targets = await resolveTargets(existing.brandId, targetIds);
   if (!targets.ok) return { error: targets.error, values };
-  const tooLong = lengthError(data.text, targets.kinds);
+  const tooLong = story ? null : lengthError(data.text, targets.kinds);
   if (tooLong) return { fieldErrors: { text: [tooLong] }, values };
 
   await db.$transaction(
@@ -163,10 +175,11 @@ export async function updateDraft(_prev: FormState, formData: FormData): Promise
       await tx.post.update({
         where: { id: id.data },
         data: {
+          format: data.format,
           text: data.text,
-          linkUrl: data.linkUrl,
-          aiGenerated: data.aiGenerated,
-          aiBrief: data.aiGenerated ? data.aiBrief : null,
+          linkUrl: story ? null : data.linkUrl,
+          aiGenerated: story ? false : data.aiGenerated,
+          aiBrief: !story && data.aiGenerated ? data.aiBrief : null,
         },
       });
       await tx.postTarget.deleteMany({ where: { postId: id.data, accountId: { notIn: targetIds } } });

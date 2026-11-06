@@ -9,6 +9,11 @@ export type ImageInfo = { mimeType: ImageKind; extension: "jpg" | "png"; width: 
 export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 /** Imagenes por publicacion: lo que admite un carrusel de Instagram (Facebook admite al menos tantas). */
 export const MAX_IMAGES_PER_POST = 10;
+/** Una historia lleva una sola foto (para varias hay que hacer una historia por foto). */
+export const MAX_IMAGES_PER_STORY = 1;
+
+/** Cuantas imagenes admite una publicacion segun su formato. */
+export const maxImagesFor = (format: string | null | undefined) => (format === "STORY" ? MAX_IMAGES_PER_STORY : MAX_IMAGES_PER_POST);
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -93,4 +98,28 @@ export function instagramImageError(img: { mimeType: string; width: number; heig
     return "Instagram solo acepta fotos entre formato vertical 4:5 y horizontal 1,91:1. Recorta la imagen.";
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Fotos de historia
+// ---------------------------------------------------------------------------
+
+/** Proporcion ideal de una historia: vertical 9:16 (por ejemplo 1080 × 1920 pixeles). */
+export const STORY_IDEAL_RATIO = 9 / 16;
+
+/**
+ * Motivo por el que Instagram rechazaria la foto de una historia, o null si sirve. Instagram solo acepta JPG; la
+ * documentacion de Meta no fija un tamano ni una proporcion minimos (recomienda 9:16), asi que eso no se bloquea:
+ * si Meta la rechaza, el mensaje de Meta se muestra tal cual. Para avisar antes, ver `storyRatioNote`.
+ */
+export function instagramStoryImageError(img: { mimeType: string }): string | null {
+  return img.mimeType === "image/jpeg" ? null : "Instagram solo acepta fotos JPG en las historias. Convierte la imagen y vuelve a subirla.";
+}
+
+/** Aviso (no es un error) si la foto se aleja de la proporcion vertical 9:16: en la historia se veria con bandas o recortada. */
+export function storyRatioNote(img: { width: number; height: number }): string | null {
+  if (img.width < 1 || img.height < 1) return null;
+  const ratio = img.width / img.height;
+  if (Math.abs(ratio - STORY_IDEAL_RATIO) / STORY_IDEAL_RATIO <= 0.1) return null;
+  return `Esta foto mide ${img.width} × ${img.height} píxeles. Las historias se ven mejor en vertical 9:16 (por ejemplo 1080 × 1920); con otra proporción se verá con bandas o recortada.`;
 }

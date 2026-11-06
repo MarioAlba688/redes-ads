@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { instagramImageError, MAX_IMAGE_BYTES, readImageInfo } from "@/lib/media-format";
+import {
+  instagramImageError,
+  instagramStoryImageError,
+  MAX_IMAGE_BYTES,
+  MAX_IMAGES_PER_POST,
+  MAX_IMAGES_PER_STORY,
+  maxImagesFor,
+  readImageInfo,
+  storyRatioNote,
+} from "@/lib/media-format";
 
 /** PNG minimo valido en cabeceras (firma + IHDR con el tamano indicado). */
 function png(width: number, height: number): Uint8Array {
@@ -82,5 +91,31 @@ describe("reglas de Instagram", () => {
     expect(instagramImageError({ ...ok, width: 200, height: 200 })).toMatch(/muy pequeña/);
     expect(instagramImageError({ ...ok, width: 1080, height: 1920 })).toMatch(/4:5/);
     expect(instagramImageError({ ...ok, width: 2400, height: 1000 })).toMatch(/1,91:1/);
+  });
+});
+
+describe("historias", () => {
+  it("una historia lleva una sola foto; una publicacion normal, hasta 10", () => {
+    expect(MAX_IMAGES_PER_STORY).toBe(1);
+    expect(maxImagesFor("STORY")).toBe(1);
+    expect(maxImagesFor("FEED")).toBe(MAX_IMAGES_PER_POST);
+    expect(maxImagesFor(null)).toBe(MAX_IMAGES_PER_POST);
+    expect(maxImagesFor(undefined)).toBe(MAX_IMAGES_PER_POST);
+  });
+
+  it("Instagram solo acepta JPG en una historia, y no pone limite de proporcion como en el feed", () => {
+    expect(instagramStoryImageError({ mimeType: "image/jpeg" })).toBeNull();
+    expect(instagramStoryImageError({ mimeType: "image/png" })).toMatch(/solo acepta fotos JPG en las historias/);
+    // La misma foto vertical 9:16 que el feed rechaza (solo admite entre 4:5 y 1,91:1) sirve de historia.
+    expect(instagramImageError({ mimeType: "image/jpeg", width: 1080, height: 1920 })).toMatch(/4:5/);
+    expect(instagramStoryImageError({ mimeType: "image/jpeg" })).toBeNull();
+  });
+
+  it("avisa (sin bloquear) cuando la foto se aleja del vertical 9:16", () => {
+    expect(storyRatioNote({ width: 1080, height: 1920 })).toBeNull();
+    expect(storyRatioNote({ width: 1000, height: 1800 })).toBeNull(); // casi 9:16
+    expect(storyRatioNote({ width: 1080, height: 1080 })).toMatch(/1080 × 1080 píxeles.*9:16.*bandas o recortada/);
+    expect(storyRatioNote({ width: 1920, height: 1080 })).toMatch(/9:16/);
+    expect(storyRatioNote({ width: 0, height: 0 })).toBeNull(); // sin medidas no se opina
   });
 });

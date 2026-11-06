@@ -6,6 +6,8 @@ import {
   MAX_PUBLISH_ATTEMPTS,
   PublishError,
   publicMediaUrl,
+  publishStoryToFacebookPage,
+  publishStoryToInstagram,
   publishToFacebookPage,
   publishToInstagram,
 } from "@/lib/meta/publish";
@@ -256,6 +258,148 @@ describe("publicar en Instagram", () => {
     const res = await publishToInstagram(ig, { text: "x", linkUrl: null, images: [image] }, { pollMs: 0 });
     expect(res.externalId).toBe("M");
     expect(res.url).toBe("https://www.instagram.com/");
+  });
+});
+
+describe("historia de una pagina de Facebook", () => {
+  /** Meta responde a la subida sin publicar, a photo_stories y (si se pide) al listado de historias. */
+  function fbStoryMeta(opts: { story?: unknown; list?: unknown | Error } = {}) {
+    return stubFetchWithBodies((url) => {
+      if (url.pathname.endsWith("/P1/photos")) return { body: { id: "PH-1" } };
+      if (url.pathname.endsWith("/P1/photo_stories")) return { body: opts.story ?? { success: true, post_id: "P1_900" } };
+      if (url.pathname.endsWith("/P1/stories")) {
+        return opts.list instanceof Error ? opts.list : { body: opts.list ?? { data: [{ post_id: "P1_900", url: "https://www.facebook.com/stories/P1/abc" }] } };
+      }
+      return { status: 404, body: { error: { message: "no", code: 803 } } };
+    });
+  }
+
+  it("sube la foto SIN publicar y crea la historia con ella: sin pie, sin mensaje y sin enlace", async () => {
+    const calls = fbStoryMeta();
+    const res = await publishStoryToFacebookPage(page, image);
+
+    expect(res).toEqual({ externalId: "P1_900", url: "https://www.facebook.com/stories/P1/abc" });
+    expect(calls.map((c) => c.url.pathname.replace("/v26.0/", ""))).toEqual(["P1/photos", "P1/photo_stories", "P1/stories"]);
+    const [photo, story, list] = calls;
+    expect(photo.init?.body).toBeInstanceOf(FormData);
+    expect(photo.form.source).toBe("[archivo imagen.jpg image/jpeg 3B]");
+    expect(photo.form.published).toBe("false"); // si se publicara sola saldria ademas como una publicacion en la pagina
+    expect(photo.form).not.toHaveProperty("caption");
+    expect(story.init?.method).toBe("POST");
+    expect(story.form).toMatchObject({ photo_id: "PH-1", access_token: "PAGE-TOKEN" });
+    expect(story.form).not.toHaveProperty("message");
+    expect(story.form).not.toHaveProperty("link");
+    expect(String(story.form.appsecret_proof)).toMatch(/^[0-9a-f]{64}$/);
+    for (const c of [photo, story]) expect(c.url.search).toBe(""); // nada sensible en la URL de un POST
+    expect(list.init?.method ?? "GET").toBe("GET");
+  });
+
+  it("si Meta no lista la historia, el enlace es el de la pagina y la historia cuenta como publicada", async () => {
+    fbStoryMeta({ list: new Error("sin red") });
+    expect(await publishStoryToFacebookPage(page, image)).toEqual({ externalId: "P1_900", url: "https://www.facebook.com/P1" });
+    fbStoryMeta({ list: { data: [{ post_id: "OTRA", url: "https://www.facebook.com/stories/P1/zzz" }] } });
+    expect((await publishStoryToFacebookPage(page, image)).url).toBe("https://www.facebook.com/P1");
+  });
+
+  it("solo se guarda como enlace una direccion https de facebook.com", async () => {
+    for (const hostile of ["javascript:alert(1)", "http://www.facebook.com/x", "https://facebook.com.evil.example/x", "https://evil.example/facebook.com/"]) {
+      fbStoryMeta({ list: { data: [{ post_id: "P1_900", url: hostile }] } });
+      expect((await publishStoryToFacebookPage(page, image)).url, hostile).toBe("https://www.facebook.com/P1");
+    }
+    fbStoryMeta({ list: { data: [{ post_id: "P1_900", url: "https://m.facebook.com/stories/1" }] } });
+    expect((await publishStoryToFacebookPage(page, image)).url).toBe("https://m.facebook.com/stories/1");
+  });
+
+  it("sin post_id usa el de la foto; sin ninguna confirmacion falla sin reintentar (podria duplicarla)", async () => {
+    fbStoryMeta({ story: { success: true }, list: { data: [] } });
+    expect((await publishStoryToFacebookPage(page, image)).externalId).toBe("PH-1");
+
+    for (const unconfirmed of [{}, { success: false }]) {
+      fbStoryMeta({ story: unconfirmed });
+      const err = await publishStoryToFacebookPage(page, image).catch((e) => e);
+      expect(err).toBeInstanceOf(PublishError);
+      expect(err.retryable).toBe(false);
+      expect(err.message).toMatch(/no confirmó que la historia se publicara/);
+    }
+  });
+
+  it("si falla la subida de la foto no se crea la historia", async () => {
+    const calls = stubFetchWithBodies((url) =>
+      url.pathname.endsWith("/photos") ? { status: 400, body: { error: { message: "(#100) Invalid image", code: 100 } } } : { body: { success: true, post_id: "X" } },
+    );
+    const err = await publishStoryToFacebookPage(page, image).catch((e) => e);
+    expect(err).toBeInstanceOf(MetaApiError);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("si Meta rechaza la historia por permisos, el error es un MetaApiError con su codigo", async () => {
+    stubFetchWithBodies((url) =>
+      url.pathname.endsWith("/photos") ? { body: { id: "PH-1" } } : { status: 403, body: { error: { message: "(#200) Requires pages_manage_posts", code: 200 } } },
+    );
+    const err = await publishStoryToFacebookPage(page, image).catch((e) => e);
+    expect(err).toBeInstanceOf(MetaApiError);
+    expect(classifyPublishError(err)).toMatchObject({ retryable: false, expired: false });
+  });
+});
+
+describe("historia de Instagram", () => {
+  const story = { ...image, publicUrl: "https://app.example.com/media/hist.jpg" };
+
+  it("crea un contenedor STORIES con la URL publica de la foto y SIN pie, espera y lo publica", async () => {
+    const calls = stubFetchWithBodies((url) => {
+      if (url.pathname.endsWith("/IG1/media")) return { body: { id: "CONT-S" } };
+      if (url.pathname.endsWith("/CONT-S")) return { body: { status_code: "FINISHED" } };
+      if (url.pathname.endsWith("/IG1/media_publish")) return { body: { id: "MEDIA-S" } };
+      if (url.pathname.endsWith("/MEDIA-S")) return { body: { permalink: "https://www.instagram.com/stories/mimarca/1/" } };
+      return { status: 404, body: { error: { message: "no", code: 803 } } };
+    });
+    const res = await publishStoryToInstagram(ig, story, { pollMs: 0 });
+
+    expect(res).toEqual({ externalId: "MEDIA-S", url: "https://www.instagram.com/stories/mimarca/1/" });
+    expect(calls.map((c) => c.url.pathname.replace("/v26.0/", ""))).toEqual(["IG1/media", "CONT-S", "IG1/media_publish", "MEDIA-S"]);
+    expect(calls[0].form).toMatchObject({ image_url: "https://app.example.com/media/hist.jpg", media_type: "STORIES", access_token: "PAGE-TOKEN" });
+    expect(calls[0].form).not.toHaveProperty("caption"); // las historias no admiten pie
+    expect(calls[0].form).not.toHaveProperty("is_carousel_item");
+    expect(calls[0].url.search).toBe("");
+    expect(calls[2].form).toMatchObject({ creation_id: "CONT-S" });
+  });
+
+  it("espera mientras Instagram procesa la foto", async () => {
+    let polls = 0;
+    stubFetchWithBodies((url) => {
+      if (url.pathname.endsWith("/IG1/media")) return { body: { id: "C" } };
+      if (url.pathname.endsWith("/C")) return { body: { status_code: ++polls < 3 ? "IN_PROGRESS" : "FINISHED" } };
+      if (url.pathname.endsWith("/media_publish")) return { body: { id: "M" } };
+      return { body: {} };
+    });
+    expect((await publishStoryToInstagram(ig, story, { pollMs: 0 })).externalId).toBe("M");
+    expect(polls).toBe(3);
+  });
+
+  it("si Instagram rechaza la foto (ERROR), falla sin publicar y sin reintento, y lo dice con «la foto de la historia»", async () => {
+    const calls = stubFetchWithBodies((url) => (url.pathname.endsWith("/IG1/media") ? { body: { id: "C" } } : { body: { status_code: "ERROR", status: "Error: Invalid image" } }));
+    const err = await publishStoryToInstagram(ig, story, { pollMs: 0 }).catch((e) => e);
+    expect(err).toBeInstanceOf(PublishError);
+    expect(err.retryable).toBe(false);
+    expect(err.message).toMatch(/rechazó la foto de la historia/);
+    expect(calls.some((c) => c.url.pathname.endsWith("media_publish"))).toBe(false);
+  });
+
+  it("si nunca termina de procesarse, se puede reintentar", async () => {
+    stubFetchWithBodies((url) => (url.pathname.endsWith("/IG1/media") ? { body: { id: "C" } } : { body: { status_code: "IN_PROGRESS" } }));
+    const err = await publishStoryToInstagram(ig, story, { pollMs: 0 }).catch((e) => e);
+    expect(err).toBeInstanceOf(PublishError);
+    expect(err.retryable).toBe(true);
+  });
+
+  it("si no se puede leer el enlace, la historia cuenta como publicada", async () => {
+    stubFetchWithBodies((url) => {
+      if (url.pathname.endsWith("/IG1/media")) return { body: { id: "C" } };
+      if (url.pathname.endsWith("/C")) return { body: { status_code: "FINISHED" } };
+      if (url.pathname.endsWith("/media_publish")) return { body: { id: "M" } };
+      return { status: 400, body: { error: { message: "x", code: 100 } } };
+    });
+    expect(await publishStoryToInstagram(ig, story, { pollMs: 0 })).toEqual({ externalId: "M", url: "https://www.instagram.com/" });
   });
 });
 

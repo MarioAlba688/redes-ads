@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { moveMedia, removeMedia } from "./actions";
 import { SubmitButton } from "@/components/submit-button";
 import { Alert } from "@/components/ui";
-import { MAX_IMAGES_PER_POST } from "@/lib/media-format";
+import { maxImagesFor, storyRatioNote } from "@/lib/media-format";
+import type { PostFormatName } from "@/lib/posts";
 
 export type MediaItem = {
   id: string;
@@ -64,8 +65,9 @@ async function uploadOne(postId: string, picked: File): Promise<{ error: string 
 /**
  * Imagenes de un borrador: subir una o varias a la vez, verlas, cambiar su orden y quitarlas. Se suben una tras otra
  * (en el orden en que se eligieron, que es el orden de la publicacion) por fetch a /api/posts/[id]/media.
+ * En una historia es una sola foto.
  */
-export function MediaUploader({ postId, media }: { postId: string; media: MediaItem[] }) {
+export function MediaUploader({ postId, media, format = "FEED" }: { postId: string; media: MediaItem[]; format?: PostFormatName }) {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -74,8 +76,13 @@ export function MediaUploader({ postId, media }: { postId: string; media: MediaI
   const [removeState, removeAction] = useActionState(removeMedia, undefined);
   const [moveState, moveAction] = useActionState(moveMedia, undefined);
 
+  const story = format === "STORY";
+  const max = maxImagesFor(format);
   const uploading = progress !== null;
-  const room = MAX_IMAGES_PER_POST - media.length;
+  const room = max - media.length;
+  // Una foto que no es vertical 9:16 no se rechaza: se avisa de como se vera.
+  const first = media[0];
+  const ratioNote = story && first?.width && first?.height ? storyRatioNote({ width: first.width, height: first.height }) : null;
 
   async function onPick(list: FileList | null) {
     const picked = Array.from(list ?? []);
@@ -106,7 +113,13 @@ export function MediaUploader({ postId, media }: { postId: string; media: MediaI
     if (problems.length) setError(problems.join(" "));
     const parts: string[] = [];
     if (converted) parts.push(`${converted === 1 ? "Convertimos tu PNG" : `Convertimos ${converted} PNG`} a JPG automáticamente, que es lo que acepta Instagram.`);
-    if (skipped > 0) parts.push(`Una publicación admite hasta ${MAX_IMAGES_PER_POST} imágenes: se subieron las primeras ${files.length} y ${skipped === 1 ? "se dejó 1 fuera" : `se dejaron ${skipped} fuera`}.`);
+    if (skipped > 0) {
+      parts.push(
+        story
+          ? "Una historia lleva una sola foto: se subió la primera y las demás se dejaron fuera."
+          : `Una publicación admite hasta ${max} imágenes: se subieron las primeras ${files.length} y ${skipped === 1 ? "se dejó 1 fuera" : `se dejaron ${skipped} fuera`}.`,
+      );
+    }
     if (parts.length) setNotice(parts.join(" "));
     router.refresh();
   }
@@ -114,16 +127,24 @@ export function MediaUploader({ postId, media }: { postId: string; media: MediaI
   return (
     <div className="space-y-3">
       <div>
-        <h2 className="font-semibold">Imágenes</h2>
-        <p className="text-sm text-muted">
-          JPG o PNG de hasta 8 MB cada una (los PNG se convierten solos a JPG, que es lo que acepta Instagram). Puedes subir hasta {MAX_IMAGES_PER_POST}: con varias, Facebook las
-          publica juntas y Instagram como carrusel. La primera es la portada. Para Instagram cada imagen debe tener formato entre 4:5 (vertical) y 1,91:1 (horizontal), y puede
-          recortarlas todas con la proporción de la primera.
-        </p>
+        <h2 className="font-semibold">{story ? "Foto de la historia" : "Imágenes"}</h2>
+        {story ? (
+          <p className="text-sm text-muted">
+            Una sola foto, JPG o PNG de hasta 8 MB (los PNG se convierten solos a JPG, que es lo que acepta Instagram). Se ve mejor en vertical 9:16, por ejemplo 1080 × 1920 píxeles. Por la
+            API de Meta la historia sale tal cual la subes: sin texto, sin enlace y sin stickers, así que lo que quieras que se vea tiene que ir dentro de la imagen.
+          </p>
+        ) : (
+          <p className="text-sm text-muted">
+            JPG o PNG de hasta 8 MB cada una (los PNG se convierten solos a JPG, que es lo que acepta Instagram). Puedes subir hasta {max}: con varias, Facebook las
+            publica juntas y Instagram como carrusel. La primera es la portada. Para Instagram cada imagen debe tener formato entre 4:5 (vertical) y 1,91:1 (horizontal), y puede
+            recortarlas todas con la proporción de la primera.
+          </p>
+        )}
       </div>
 
       {error && <Alert>{error}</Alert>}
       {notice && media.length > 0 && <Alert tone="success">{notice}</Alert>}
+      {ratioNote && <Alert tone="warning">{ratioNote}</Alert>}
       {removeState?.error && <Alert>{removeState.error}</Alert>}
       {moveState?.error && <Alert>{moveState.error}</Alert>}
 
@@ -131,7 +152,7 @@ export function MediaUploader({ postId, media }: { postId: string; media: MediaI
         <ol className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           {media.map((m, i) => (
             <li key={m.id} className="min-w-0 space-y-2 rounded-lg border border-border bg-surface p-2">
-              <p className="text-xs font-medium text-muted">{i === 0 ? "1 · Portada" : i + 1}</p>
+              <p className="text-xs font-medium text-muted">{story ? "Historia" : i === 0 ? "1 · Portada" : i + 1}</p>
               {m.missing ? (
                 <p className="rounded-lg border border-dashed border-warning/60 bg-warning-bg px-2 py-2 text-xs text-warning">
                   El archivo ya no está en el servidor. Quítala y vuelve a subirla.
@@ -140,7 +161,11 @@ export function MediaUploader({ postId, media }: { postId: string; media: MediaI
                 <>
                   {/* Imagen dinamica servida por nuestra ruta /media (con sesion): next/image no aporta nada aqui. */}
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={m.url} alt={media.length > 1 ? `Imagen ${i + 1} de la publicación` : "Imagen de la publicación"} className="h-36 w-full rounded-md border border-border object-cover" />
+                  <img
+                    src={m.url}
+                    alt={story ? "Foto de la historia" : media.length > 1 ? `Imagen ${i + 1} de la publicación` : "Imagen de la publicación"}
+                    className="h-36 w-full rounded-md border border-border object-cover"
+                  />
                 </>
               )}
               <p className="truncate text-xs text-muted" title={m.name ?? undefined}>
@@ -168,7 +193,7 @@ export function MediaUploader({ postId, media }: { postId: string; media: MediaI
                 )}
                 <form action={removeAction}>
                   <input type="hidden" name="mediaId" value={m.id} />
-                  <SubmitButton variant="secondary" small pendingText="Quitando…" aria-label={`Quitar imagen ${i + 1}`}>
+                  <SubmitButton variant="secondary" small pendingText="Quitando…" aria-label={story ? "Quitar la foto de la historia" : `Quitar imagen ${i + 1}`}>
                     Quitar
                   </SubmitButton>
                 </form>
@@ -184,15 +209,15 @@ export function MediaUploader({ postId, media }: { postId: string; media: MediaI
             ref={input}
             id="media-file"
             type="file"
-            multiple
+            multiple={!story}
             accept="image/jpeg,image/png"
             disabled={uploading}
             onChange={(e) => onPick(e.target.files)}
             className="block w-full text-sm text-muted file:mr-3 file:rounded-lg file:border file:border-border file:bg-surface file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-foreground hover:file:bg-background"
-            aria-label={media.length > 0 ? "Agregar más imágenes" : "Subir imágenes"}
+            aria-label={story ? "Subir la foto de la historia" : media.length > 0 ? "Agregar más imágenes" : "Subir imágenes"}
           />
           <p className="mt-1 text-xs text-muted">
-            {media.length === 0 ? `Puedes elegir varias a la vez (hasta ${MAX_IMAGES_PER_POST}).` : `Caben ${room} más.`}
+            {story ? "Elige la foto de la historia." : media.length === 0 ? `Puedes elegir varias a la vez (hasta ${max}).` : `Caben ${room} más.`}
           </p>
           {uploading && (
             <p className="mt-2 text-sm text-muted" role="status">
@@ -201,7 +226,9 @@ export function MediaUploader({ postId, media }: { postId: string; media: MediaI
           )}
         </div>
       ) : (
-        <p className="text-sm text-muted">Llegaste al máximo de {MAX_IMAGES_PER_POST} imágenes. Quita alguna para subir otra.</p>
+        <p className="text-sm text-muted">
+          {story ? "La historia ya tiene su foto. Quítala para subir otra." : `Llegaste al máximo de ${max} imágenes. Quita alguna para subir otra.`}
+        </p>
       )}
     </div>
   );

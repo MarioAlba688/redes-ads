@@ -26,6 +26,7 @@ const TOC = [
   { id: "conectar", label: "4. Conectar en la app" },
   { id: "marcas", label: "5. Asignar a cada marca" },
   { id: "publicar-instagram", label: "6. Publicar en Instagram" },
+  { id: "historias", label: "Historias de Facebook e Instagram" },
   { id: "estadisticas", label: "7. Estadísticas de las publicaciones" },
   { id: "anuncios", label: "8. Anuncios" },
   { id: "recomendaciones", label: "9. Cuándo conviene pagar publicidad" },
@@ -358,6 +359,45 @@ export default async function ManualPage() {
           </Callout>
         </Section>
 
+        <Section
+          id="historias"
+          title="Historias de Facebook e Instagram"
+          intro={
+            <>
+              Una historia es <UI>una sola foto que dura 24 horas</UI>. Se crea en <Link href="/publicaciones/nueva?formato=historia" className="font-medium text-primary hover:underline">Publicaciones → Nueva historia</Link> y sigue el mismo camino que una
+              publicación: borrador, revisión, aprobación, fecha y publicación automática, en cada página de Facebook y cuenta de Instagram que elijas.
+            </>
+          }
+        >
+          <h3 className="text-sm font-semibold">La foto</h3>
+          <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed">
+            <li>
+              Una sola por historia. Si quieres varias, haz una historia por foto. Por ahora no se publican videos.
+            </li>
+            <li>
+              Lo ideal es <UI>vertical 9:16</UI> (por ejemplo 1080 × 1920 píxeles). Otra proporción no se rechaza, pero se verá con bandas o recortada: la app te avisa al subirla.
+            </li>
+            <li>
+              <UI>JPG</UI> o PNG de hasta 8 MB. Instagram solo acepta JPG en las historias, así que un PNG se convierte solo al subirlo.
+            </li>
+          </ul>
+          <h3 className="pt-2 text-sm font-semibold">Lo que una historia no puede llevar</h3>
+          <Callout tone="warning">
+            <p>
+              Meta no deja publicar por su API el <UI>texto</UI>, el <UI>enlace</UI> ni los <UI>stickers</UI> (encuesta, enlace, ubicación) de una historia: sale solo la foto. Lo que quieras que se vea (un precio, una frase, un botón dibujado) tiene que ir
+              <em> dentro de la imagen</em>, por ejemplo diseñada antes en Canva. El campo de texto de una historia es solo una <UI>nota interna</UI> para reconocerla en las listas y el calendario; no se publica.
+            </p>
+          </Callout>
+          <h3 className="pt-2 text-sm font-semibold">Después de publicar</h3>
+          <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed">
+            <li>Dura 24 horas y desaparece sola. La ficha de la publicación guarda el enlace a la historia.</li>
+            <li>No tiene estadísticas en esta app (se pierden a las 24 horas) y no se puede impulsar con un anuncio.</li>
+            <li>
+              No hay nada nuevo que configurar: usa los mismos permisos de publicar fotos (<code>pages_manage_posts</code> en Facebook e <code>instagram_content_publish</code> en Instagram) y la misma dirección pública del paso 6, porque Instagram descarga la foto desde internet.
+            </li>
+          </ul>
+        </Section>
+
         <Section id="estadisticas" title="7. Estadísticas de las publicaciones" intro="Vistas, alcance, reacciones, comentarios, compartidos y guardados de lo que publicas desde esta app. Se ven en el menú Estadísticas.">
           <Steps>
             <Step>
@@ -573,6 +613,24 @@ export default async function ManualPage() {
             <Problem message="«Instagram solo acepta imágenes JPG» / «Instagram solo acepta fotos entre formato vertical 4:5 y horizontal 1,91:1»">
               <p>
                 Si la imagen quedó guardada como PNG, quítala con <UI>Quitar</UI> y vuelve a subirla (se convierte sola). Si la proporción no cabe en el rango, recórtala antes de subirla.
+              </p>
+            </Problem>
+            <Problem message="«Una historia necesita una foto» / «Una historia lleva una sola foto…» / «Instagram solo acepta fotos JPG en las historias»">
+              <p>
+                Una historia lleva <UI>una sola foto</UI>, y Instagram solo acepta JPG en ellas. Sube la foto en el borrador; si hay más de una, quita las que sobran (o haz una historia por foto); si quedó como PNG, quítala con <UI>Quitar</UI> y vuelve a subirla (se
+                convierte sola). Si cambias un borrador a historia y tiene varias fotos, la app no las quita por ti: pide que lo hagas tú antes de guardar. Más en la sección «Historias».
+              </p>
+            </Problem>
+            <Problem message="«Instagram rechazó la foto de la historia» / «Meta rechazó la publicación: …» (en una historia)">
+              <p>
+                Instagram revisó la foto y no la aceptó. Lo más probable es el formato: usa un <UI>JPG vertical 9:16</UI> (por ejemplo 1080 × 1920 píxeles) de hasta 8 MB. Si el mensaje trae un <UI>Detalle de Meta</UI>, ahí está el motivo exacto. Corrige la foto con{" "}
+                <UI>Volver a borrador</UI>, súbela de nuevo y envíala a revisión otra vez.
+              </p>
+            </Problem>
+            <Problem message="«Facebook no confirmó que la historia se publicara»">
+              <p>
+                Facebook recibió la foto pero no avisó si la historia quedó publicada, y la app no reintenta sola porque podría duplicarla. Abre la página de Facebook y mira sus historias: si ya está, no hay nada más que hacer; si no está, pulsa{" "}
+                <UI>Reintentar los que fallaron</UI>.
               </p>
             </Problem>
             <Problem message="«La conexión con Meta venció o fue revocada»">

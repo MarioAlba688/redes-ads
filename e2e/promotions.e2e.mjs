@@ -65,12 +65,12 @@ const IMAGE_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46,
 let counter = 0;
 
 /** Una publicacion con su imagen. `targets` son destinos YA publicados (para impulsar). */
-async function makePost({ text, status = "DRAFT", image = true, targets = [] }) {
+async function makePost({ text, status = "DRAFT", image = true, targets = [], format = "FEED" }) {
   const id = `post-${String(++counter).padStart(4, "0")}`;
   text ??= `Publicación ${id} ${tag()}`;
   await db.sql(
-    `INSERT INTO Post (id, brandId, text, status, publishedAt, createdById, aiGenerated, createdAt, updatedAt) VALUES (?, ?, ?, ?, ${status === "PUBLISHED" ? "UTC_TIMESTAMP(3)" : "NULL"}, ?, 0, NOW(3), NOW(3))`,
-    [id, BRAND, text, status, USERS.edgar.id],
+    `INSERT INTO Post (id, brandId, text, format, status, publishedAt, createdById, aiGenerated, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ${status === "PUBLISHED" ? "UTC_TIMESTAMP(3)" : "NULL"}, ?, 0, NOW(3), NOW(3))`,
+    [id, BRAND, text, format, status, USERS.edgar.id],
   );
   let storageKey = null;
   if (image) {
@@ -837,6 +837,20 @@ try {
   await edgar.goto(`${APP}/anuncios/nuevo?tipo=impulsar&destino=${FB}`);
   check("y no se ofrece para crear anuncios", (await edgar.locator("#cuenta option[disabled]").count()) === 1);
   await db.sql("UPDATE SocialAccount SET scopes=? WHERE id=?", [FULL_SCOPES, ACC_USD]);
+
+  // Una historia dura 24 horas: no se ofrece para impulsar ni para crear un anuncio con su foto (aunque se pida por la dirección).
+  const story = await makePost({ text: "", format: "STORY", status: "PUBLISHED", targets: [{ account: "acc-fb", externalId: "P-1_888" }] });
+  const storyTarget = story.targets["acc-fb"];
+  await admin.goto(`${APP}/anuncios/nuevo?tipo=impulsar&destino=${storyTarget}`);
+  check(
+    "una historia publicada no se ofrece para impulsar, ni pidiéndola por la dirección (una publicación normal sí)",
+    (await admin.locator(`#fuente option[value="${storyTarget}"]`).count()) === 0 && (await admin.locator(`#fuente option[value="${FB}"]`).count()) === 1 && (await admin.locator("#fuente").inputValue()) === "",
+  );
+  await admin.goto(`${APP}/anuncios/nuevo?tipo=anuncio&publicacion=${story.id}`);
+  check(
+    "ni se ofrece para crear un anuncio nuevo con su foto (una publicación normal sí)",
+    (await admin.locator(`#fuente option[value="${story.id}"]`).count()) === 0 && (await admin.locator(`#fuente option[value="${published.id}"]`).count()) === 1,
+  );
 
   // El Manual explica los anuncios y su estado ahora lo refleja
   await admin.goto(`${APP}/manual`);
