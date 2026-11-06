@@ -285,6 +285,10 @@ model PostTarget {
   nextAttemptAt DateTime?
   // Reserva del proceso que lo esta publicando (evita que dos lo publiquen a la vez).
   lockedAt      DateTime?
+  // Publicacion con video: la red social lo procesa durante minutos. Aqui queda el id del contenedor (Instagram) o del
+  // video ya enviado (Facebook) para seguir esperando en las vueltas siguientes sin crear otro, y desde cuando espera.
+  remoteId        String?     @db.VarChar(191)
+  remoteStartedAt DateTime?
   externalId    String?       @db.VarChar(191)
   externalUrl   String?       @db.VarChar(500)
   publishedAt   DateTime?
@@ -319,20 +323,33 @@ model PostTargetMetrics {
   @@index([nextFetchAt])
 }
 
-// Imagen adjunta a una publicacion. El archivo vive en disco (storageKey); aqui solo sus datos.
+// Tipo de archivo adjunto a una publicacion.
+enum MediaKind {
+  IMAGE
+  VIDEO // una publicacion con video lleva solo ese video (sin carrusel)
+}
+
+// Imagen o video adjunto a una publicacion. El archivo vive en disco (storageKey); aqui solo sus datos.
 model PostMedia {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   postId       String
-  post         Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
-  mimeType     String   @db.VarChar(64)
+  post         Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  kind         MediaKind @default(IMAGE)
+  mimeType     String    @db.VarChar(64)
   size         Int
+  // En un video, el tamano ya con el giro aplicado (como se ve).
   width        Int?
   height       Int?
+  // Solo video: duracion en milisegundos y lo leido del archivo (codecs, fps, bitrate...; ver src/lib/video-format.ts).
+  durationMs   Int?
+  videoInfo    Json?
+  // Solo video: archivo JPG con el primer cuadro (portada). Opcional; Instagram lo usa como cover_url.
+  thumbKey     String?   @unique @db.VarChar(191)
   // Nombre aleatorio del archivo en la carpeta de medios (no adivinable).
-  storageKey   String   @unique @db.VarChar(191)
-  originalName String?  @db.VarChar(255)
-  position     Int      @default(0)
-  createdAt    DateTime @default(now())
+  storageKey   String    @unique @db.VarChar(191)
+  originalName String?   @db.VarChar(255)
+  position     Int       @default(0)
+  createdAt    DateTime  @default(now())
 
   @@index([postId])
 }

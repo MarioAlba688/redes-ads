@@ -34,8 +34,9 @@ export function statsWhere(f: StatsFilters, now: Date): Prisma.PostTargetWhereIn
     externalId: { not: null },
     publishedAt: { gte: new Date(now.getTime() - f.days * 86_400_000) },
     account: { platform: "META", kind: f.kind ? f.kind : { in: [...STATS_KINDS] } },
-    // Las historias duran 24 horas: no tienen estadisticas que leer despues.
-    post: { format: "FEED", ...(f.brandId ? { brandId: f.brandId } : {}) },
+    // Las historias duran 24 horas: no tienen estadisticas que leer despues. Los videos (Reels) tampoco todavia: sus
+    // metricas son otras y no estan verificadas con una cuenta real.
+    post: { format: "FEED", media: { none: { kind: "VIDEO" } }, ...(f.brandId ? { brandId: f.brandId } : {}) },
   };
 }
 

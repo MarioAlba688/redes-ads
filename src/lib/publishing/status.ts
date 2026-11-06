@@ -4,14 +4,15 @@ export type TargetStatusName = "PENDING" | "PUBLISHING" | "PUBLISHED" | "FAILED"
 export type DerivedPostStatus = "PUBLISHING" | "SCHEDULED" | "PUBLISHED" | "PARTIAL" | "FAILED";
 
 /**
- * - Algun destino publicandose -> PUBLISHING.
+ * - Algun destino publicandose -> PUBLISHING. Un video que la red social esta procesando (pendiente pero con su id
+ *   ya guardado: `waiting`) cuenta igual: no esta esperando su hora, esta en camino.
  * - Ninguno publicandose pero alguno pendiente (esperando un reintento o su turno) -> SCHEDULED: el proceso
  *   en segundo plano la vuelve a tomar cuando toque.
  * - Todos terminaron: todos publicados -> PUBLISHED; ninguno -> FAILED; mezcla -> PARTIAL.
  */
-export function derivePostStatus(targets: readonly { status: TargetStatusName }[]): DerivedPostStatus {
+export function derivePostStatus(targets: readonly { status: TargetStatusName; waiting?: boolean }[]): DerivedPostStatus {
   if (targets.length === 0) return "FAILED";
-  if (targets.some((t) => t.status === "PUBLISHING")) return "PUBLISHING";
+  if (targets.some((t) => t.status === "PUBLISHING" || (t.status === "PENDING" && t.waiting === true))) return "PUBLISHING";
   if (targets.some((t) => t.status === "PENDING")) return "SCHEDULED";
   const published = targets.filter((t) => t.status === "PUBLISHED").length;
   if (published === targets.length) return "PUBLISHED";

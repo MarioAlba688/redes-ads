@@ -12,7 +12,7 @@ import path from "node:path";
 import zlib from "node:zlib";
 import bcrypt from "bcryptjs";
 import { chromium } from "playwright-core";
-import { APP_ID, APP_SECRET, PAGE_TOKEN, startFakeMeta } from "./fake-meta.mjs";
+import { APP_ID, APP_SECRET, isoVideoInfo, PAGE_TOKEN, startFakeMeta } from "./fake-meta.mjs";
 import { createChecker, createDb, findChrome, requireTestDb, startApp, waitFor, waitReady } from "./helpers.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -577,7 +577,7 @@ try {
   const storyId = edgar.url().match(/publicaciones\/([^/?]+)/)[1];
   const storyDraft = (await db.sql("SELECT format, text, linkUrl FROM Post WHERE id=?", [storyId]))[0];
   check("una historia se guarda sin texto ni enlace, con el formato Historia y sus 2 destinos", storyDraft?.format === "STORY" && storyDraft.text === "" && storyDraft.linkUrl === null && (await targetsOf(storyId)).length === 2);
-  check("al guardarla, el editor ofrece una sola foto (sin elegir varias)", (await edgar.getByRole("heading", { name: "Foto de la historia" }).count()) === 1 && (await edgar.locator("#media-file").getAttribute("multiple")) === null);
+  check("al guardarla, el editor ofrece una sola foto (sin elegir varias)", (await edgar.getByRole("heading", { name: "Foto o video de la historia" }).count()) === 1 && (await edgar.locator("#media-file").getAttribute("multiple")) === null);
 
   await edgar.getByRole("button", { name: "Enviar a revisión" }).click();
   await edgar.getByText("Una historia necesita una foto: súbela en el borrador.").waitFor();
@@ -687,6 +687,241 @@ try {
   await edgar.getByRole("button", { name: "Enviar a revisión" }).click();
   await edgar.getByText(/Instagram solo acepta fotos JPG en las historias/).waitFor();
   check("una foto PNG en una historia con Instagram no pasa a revisión y se explica", (await postRow(storyPng.id)).status === "DRAFT");
+
+  // ------------------------------------------------------------ 3e. video: subida por partes, Reels e historias con video (Facebook e Instagram)
+  // Los videos de prueba son MP4 reales (e2e/fixtures, hechos con ffmpeg: 540×960, 3 s, H.264 + AAC).
+  calm();
+  const FIX = path.join(ROOT, "e2e", "fixtures");
+  const goodMp4 = fs.readFileSync(path.join(FIX, "video-vertical.mp4"));
+  const moovLastMp4 = fs.readFileSync(path.join(FIX, "video-moov-al-final.mp4"));
+  /** Caja `free` de relleno: un MP4 sigue siendo valido con una al final. */
+  const freeBox = (bytes) => {
+    const head = Buffer.alloc(8);
+    head.writeUInt32BE(bytes, 0);
+    head.write("free", 4, "latin1");
+    return Buffer.concat([head, Buffer.alloc(bytes - 8)]);
+  };
+  const bigMp4 = Buffer.concat([goodMp4, freeBox(12 * 1024 * 1024)]); // mas de 10 MB: lo que el proxy de Next dejaria pasar CORTADO
+  const postVideo = (request, postId, body, headers = {}) =>
+    request.post(`${APP}/api/posts/${postId}/media`, { data: body, headers: { origin: APP, "content-type": "video/mp4", "x-file-name": encodeURIComponent("clip ñ.mp4"), ...headers } });
+  const videoRows = (postId) => db.sql("SELECT id, kind, mimeType, size, width, height, durationMs, videoInfo, storageKey, thumbKey, originalName FROM PostMedia WHERE postId=?", [postId]);
+  const partFiles = () => mediaFiles().filter((n) => n.endsWith(".part"));
+  const VIDEO_INFO = JSON.stringify({ container: "mp4", brand: "isom", videoCodec: "avc1", fps: 30, rotation: 0, bitrate: 228_000, fastStart: true, audio: { codec: "mp4a", channels: 2, sampleRate: 48_000 } });
+  /** Agrega a una publicacion un video ya guardado (archivo + fila), como si se hubiera subido. */
+  async function addVideo(postId, { cover = false, durationMs = 3000 } = {}) {
+    const key = `${randomBytes(24).toString("hex")}.mp4`;
+    fs.writeFileSync(path.join(MEDIA_DIR, key), goodMp4);
+    let thumbKey = null;
+    if (cover) {
+      thumbKey = `${randomBytes(24).toString("hex")}.jpg`;
+      fs.writeFileSync(path.join(MEDIA_DIR, thumbKey), jpeg(540, 960));
+    }
+    await db.sql(
+      "INSERT INTO PostMedia (id, postId, kind, mimeType, size, width, height, durationMs, videoInfo, thumbKey, storageKey, originalName, position, createdAt) VALUES (?, ?, 'VIDEO', 'video/mp4', ?, 540, 960, ?, ?, ?, ?, 'clip.mp4', 0, NOW(3))",
+      [`${postId}-v`, postId, goodMp4.length, durationMs, VIDEO_INFO, thumbKey, key],
+    );
+    return { key, thumbKey };
+  }
+  const schedulePast = (id) => db.sql(`UPDATE Post SET status='SCHEDULED', scheduledAt = ${inMinutes(-1)} WHERE id=?`, [id]);
+  const remoteOf = async (id) => (await db.sql("SELECT accountId, status, attempts, remoteId, error FROM PostTarget WHERE postId=? ORDER BY accountId", [id])).map((t) => ({ ...t, attempts: Number(t.attempts) }));
+  /** Como pasa el tiempo de espera entre consultas: adelanta la siguiente vuelta del worker hasta que termine la publicacion. */
+  async function driveVideo(id, wanted = ["PUBLISHED", "PARTIAL", "FAILED"], turns = 14) {
+    for (let i = 0; i < turns; i++) {
+      if (wanted.includes((await postRow(id)).status)) return true;
+      await dueNow(id);
+      await sleep(1600);
+    }
+    return wanted.includes((await postRow(id)).status);
+  }
+  const sentVideo = (from) => fake.published().slice(from);
+
+  // --- subir un video a un borrador (editor): cuerpo crudo, a disco por partes, validado por su contenido
+  const vDraft = await makePost({ status: "DRAFT", text: `Reel de prueba ${tag()}`, targets: ["acc-fb-reservi", "acc-ig-reservi"] });
+  const up = await postVideo(edgarCtx.request, vDraft.id, goodMp4);
+  const upJson = await up.json();
+  const rows1 = await videoRows(vDraft.id);
+  const info1 = typeof rows1[0]?.videoInfo === "string" ? JSON.parse(rows1[0].videoInfo) : rows1[0]?.videoInfo;
+  check(
+    "un video MP4 se sube, se lee por su contenido (tamaño, duración, códecs) y queda registrado como video",
+    up.status() === 200 && upJson.kind === "VIDEO" && rows1.length === 1 && rows1[0].kind === "VIDEO" && rows1[0].mimeType === "video/mp4" && rows1[0].width === 540 && rows1[0].height === 960 && Math.abs(rows1[0].durationMs - 3000) < 100 && info1?.videoCodec === "avc1" && info1?.fastStart === true && info1?.audio?.codec === "mp4a" && rows1[0].originalName === "clip ñ.mp4",
+    JSON.stringify(upJson),
+  );
+  check("el archivo guardado es idéntico al subido y no quedan provisionales", sha(fs.readFileSync(path.join(MEDIA_DIR, rows1[0].storageKey))) === sha(goodMp4) && partFiles().length === 0);
+
+  const vMoov = await makePost({ status: "DRAFT", text: `Reel con el índice al final ${tag()}`, targets: ["acc-fb-reservi"] });
+  const upMoov = await postVideo(edgarCtx.request, vMoov.id, moovLastMp4);
+  const moovJson = await upMoov.json();
+  const moovRow = (await videoRows(vMoov.id))[0];
+  const moovStored = moovRow ? fs.readFileSync(path.join(MEDIA_DIR, moovRow.storageKey)) : Buffer.alloc(0);
+  check(
+    "un video con el índice (moov) al final se reordena solo al subirlo, sin cambiar de tamaño",
+    upMoov.status() === 200 && moovJson.optimized === true && isoVideoInfo(moovStored).fastStart === true && moovStored.length === moovLastMp4.length && isoVideoInfo(moovLastMp4).fastStart === false,
+    JSON.stringify(moovJson),
+  );
+
+  const vBig = await makePost({ status: "DRAFT", text: `Reel de más de 10 MB ${tag()}`, targets: ["acc-fb-reservi"] });
+  const upBig = await postVideo(edgarCtx.request, vBig.id, bigMp4);
+  const bigRow = (await videoRows(vBig.id))[0];
+  const bigStored = bigRow ? fs.readFileSync(path.join(MEDIA_DIR, bigRow.storageKey)) : Buffer.alloc(0);
+  check(
+    "un video de más de 10 MB llega completo (el proxy de Next no lo corta) y se guarda idéntico",
+    upBig.status() === 200 && bigStored.length === bigMp4.length && sha(bigStored) === sha(bigMp4) && bigRow.size === bigMp4.length && partFiles().length === 0,
+    `${upBig.status()} ${bigStored.length}/${bigMp4.length}`,
+  );
+
+  const vText = await makePost({ status: "DRAFT", text: `Reel que no es un video ${tag()}`, targets: ["acc-fb-reservi"] });
+  const upText = await postVideo(edgarCtx.request, vText.id, Buffer.from("esto es un texto cualquiera que no es un video, aunque se llame .mp4"));
+  check("lo que no es un video se rechaza con su motivo y no deja archivos", upText.status() === 400 && /no es un video/.test((await upText.json()).error) && (await videoRows(vText.id)).length === 0 && partFiles().length === 0);
+  const anonUp = await fetch(`${APP}/api/posts/${vDraft.id}/media`, { method: "POST", headers: { "content-type": "video/mp4" }, body: goodMp4 });
+  check("sin sesión, la subida de un video responde 401 en JSON (el proxy ya no la cubre, la ruta valida)", anonUp.status === 401 && /json/.test(anonUp.headers.get("content-type") ?? ""));
+
+  // --- un video no se mezcla con imágenes
+  const imgPost = await makePost({ status: "DRAFT", targets: ["acc-fb-reservi"], image: "jpg" });
+  const mixA = await postVideo(edgarCtx.request, imgPost.id, goodMp4);
+  const mixB = await edgarCtx.request.post(`${APP}/api/posts/${vDraft.id}/media`, { multipart: { file: file("foto.jpg", "image/jpeg", jpeg(1080, 1350)) }, headers: { origin: APP } });
+  check(
+    "no se sube un video a una publicación con imágenes, ni imágenes a una con video",
+    mixA.status() === 409 && /ya tiene imágenes/.test((await mixA.json()).error) && mixB.status() === 409 && /ya tiene un video/.test((await mixB.json()).error),
+  );
+
+  // --- servir el video por partes: Range (206), HEAD y 416; público solo cuando la publicación ya está programada
+  const vUrl = `${APP}/media/${rows1[0].storageKey}`;
+  const rangeRes = await edgarCtx.request.get(vUrl, { headers: { range: "bytes=0-99" } });
+  const headRes = await edgarCtx.request.head(vUrl);
+  const badRange = await edgarCtx.request.get(vUrl, { headers: { range: `bytes=${goodMp4.length + 10}-` } });
+  const fullRes = await edgarCtx.request.get(vUrl);
+  check(
+    "el video se sirve por partes: 206 con Content-Range para un tramo, HEAD con su tamaño y 416 si el tramo no cabe",
+    rangeRes.status() === 206 && rangeRes.headers()["content-range"] === `bytes 0-99/${goodMp4.length}` && (await rangeRes.body()).length === 100 && rangeRes.headers()["content-type"] === "video/mp4" && rangeRes.headers()["accept-ranges"] === "bytes" &&
+      headRes.status() === 200 && Number(headRes.headers()["content-length"]) === goodMp4.length && badRange.status() === 416 && sha(await fullRes.body()) === sha(goodMp4),
+    `${rangeRes.status()} ${rangeRes.headers()["content-range"]}`,
+  );
+  check("un borrador no se puede ver sin sesión", (await anon(vUrl)).status === 404);
+
+  // --- revisar: un video de más duración que la red admite se avisa antes de enviarlo
+  await db.sql("UPDATE PostMedia SET durationMs = 100000 WHERE postId=?", [vDraft.id]);
+  await edgar.goto(`${APP}/publicaciones/${vDraft.id}`);
+  check("la ficha del borrador reproduce el video con su duración y tamaño", (await edgar.getByLabel("Video de la publicación").count()) >= 1 && (await edgar.getByText(/540 × 960 px · 100 s/).count()) === 1);
+  await edgar.getByRole("button", { name: "Enviar a revisión" }).click();
+  await edgar.getByText(/Facebook admiten hasta 90 segundos/).waitFor();
+  check("un video de 100 s no pasa a revisión si va a Facebook (admite 90 s) y lo explica", (await postRow(vDraft.id)).status === "DRAFT");
+  await db.sql("UPDATE PostMedia SET durationMs = 3000 WHERE postId=?", [vDraft.id]);
+
+  // --- subir desde la pantalla (navegador real): barra de avance y portada sacada del primer cuadro
+  const uiPost = await makePost({ status: "DRAFT", text: `Reel desde la pantalla ${tag()}`, targets: ["acc-ig-reservi"] });
+  await edgar.goto(`${APP}/publicaciones/${uiPost.id}`);
+  check("el editor ofrece subir imágenes o un video", (await edgar.getByRole("heading", { name: "Imágenes o video" }).count()) === 1 && /video\/mp4/.test((await edgar.locator("#media-file").getAttribute("accept")) ?? ""));
+  await edgar.locator("#media-file").setInputFiles(file("clip.mp4", "video/mp4", goodMp4));
+  await edgar.getByLabel("Video de la publicación").waitFor({ timeout: 30_000 });
+  const uiRows = await videoRows(uiPost.id);
+  check("el video subido desde la pantalla queda guardado", uiRows.length === 1 && uiRows[0].kind === "VIDEO" && uiRows[0].originalName === "clip.mp4");
+  const coverOk = uiRows[0].thumbKey !== null && sha(fs.readFileSync(path.join(MEDIA_DIR, uiRows[0].thumbKey))).length === 64 && (await (await edgarCtx.request.get(`${APP}/media/${uiRows[0].thumbKey}`)).headers())["content-type"] === "image/jpeg";
+  const noCoverNotice = (await edgar.getByText(/No se pudo sacar la portada/).count()) === 1;
+  check("el navegador saca la portada del primer cuadro y la guarda (o avisa que no pudo, sin impedir el video)", coverOk || noCoverNotice);
+  await shot(edgar, "video-borrador.png");
+  await edgar.getByRole("button", { name: "Quitar el video" }).click();
+  check("quitar el video borra su archivo y su portada del disco", await waitFor(async () => ((await videoRows(uiPost.id)).length === 0 && !mediaFiles().includes(uiRows[0].storageKey) && (uiRows[0].thumbKey === null || !mediaFiles().includes(uiRows[0].thumbKey)) ? true : null), { timeout: 15_000 }));
+
+  // --- un Reel en Facebook e Instagram, por fases: el worker crea/sube, espera a Meta y publica una sola vez
+  fake.setScenario({ videoProcessing: 1 });
+  const reel = await makePost({ status: "DRAFT", text: `Nuestro primer Reel ${tag()}`, link: "https://reservi.example/reel", targets: ["acc-fb-reservi", "acc-ig-reservi"] });
+  const reelVideo = await addVideo(reel.id, { cover: true });
+  const sent0 = fake.published().length;
+  await schedulePast(reel.id);
+  check(
+    "al llegar la hora, el worker crea el contenedor y sube el video, y los destinos quedan «procesando» sin gastar intentos",
+    await waitFor(async () => ((await remoteOf(reel.id)).every((t) => t.remoteId) ? true : null), { timeout: 20_000 }),
+  );
+  const mid = await remoteOf(reel.id);
+  check("esperando a Meta: destinos pendientes con su id guardado, 0 intentos y la publicación «Publicando»", mid.every((t) => t.status === "PENDING" && t.attempts === 0 && t.error === null) && (await postRow(reel.id)).status === "PUBLISHING", JSON.stringify(mid));
+  await admin.goto(`${APP}/publicaciones/${reel.id}`);
+  check("la ficha dice que el video se está procesando en cada red", (await admin.getByText(/procesando el video en Instagram/).count()) === 1 && (await admin.getByText(/procesando el video en Facebook/).count()) === 1);
+  const sentMid = sentVideo(sent0);
+  check("Instagram recibió el Reel con la URL pública del video, el pie, la portada y share_to_feed, y aún no se publicó", sentMid.some((p) => p.kind === "ig-reel" && p.videoUrl === `http://127.0.0.1:${APP_PORT}/media/${reelVideo.key}` && p.caption === reel.text && p.shareToFeed === "true" && p.coverUrl === `http://127.0.0.1:${APP_PORT}/media/${reelVideo.thumbKey}` && p.cover?.status === 200) && !sentMid.some((p) => p.kind === "ig-publish"));
+  check("Facebook recibió el video por rupload (con el token en la cabecera y el tamaño exacto) y se pidió publicarlo", fake.uploads().length >= 1 && fake.uploads().every((u) => u.authOk && u.offset === 0 && u.fileSize === goodMp4.length && u.received === goodMp4.length && u.sha256 === sha(goodMp4) && !u.tokenInUrl) && sentMid.some((p) => p.kind === "fb-reel"));
+  check("el estado de la publicación con video en proceso no se confunde con una programada (no se vuelve a publicar sola)", (await postRow(reel.id)).status === "PUBLISHING" && sentVideo(sent0).filter((p) => p.kind === "fb-reel").length === 1);
+
+  check("pasado el tiempo de espera, el worker consulta, ve que ya terminó y publica", await driveVideo(reel.id, ["PUBLISHED"]));
+  const sentReel = sentVideo(sent0);
+  const fbReel = sentReel.find((p) => p.kind === "fb-reel");
+  check(
+    "el Reel salió UNA sola vez en cada red, con el video idéntico al subido, el texto y el enlace en la descripción",
+    sentReel.filter((p) => p.kind === "fb-reel").length === 1 && sentReel.filter((p) => p.kind === "ig-publish" && p.video === true).length === 1 && fbReel.sha256 === sha(goodMp4) && fbReel.description === `${reel.text}\n\nhttps://reservi.example/reel` && fbReel.videoState === "PUBLISHED" && sentReel.find((p) => p.kind === "ig-reel").fetched.sha256 === sha(goodMp4),
+  );
+  const reelTargets = await targetsOf(reel.id);
+  check(
+    "cada destino quedó publicado en su primer intento y con su enlace",
+    reelTargets.length === 2 && reelTargets.every((t) => t.status === "PUBLISHED" && t.attempts === 1 && t.error === null) && reelTargets.find((t) => t.accountId === "acc-fb-reservi").externalUrl.startsWith("https://www.facebook.com/reel/FBV-") && reelTargets.find((t) => t.accountId === "acc-ig-reservi").externalUrl.startsWith("https://www.instagram.com/p/"),
+    JSON.stringify(reelTargets.map((t) => t.externalUrl)),
+  );
+  await admin.goto(`${APP}/publicaciones/${reel.id}`);
+  check("la ficha del Reel publicado dice que los videos no tienen estadísticas ni impulso, y no ofrece impulsarlo", (await admin.getByText(/Los videos todavía no tienen estadísticas/).count()) === 2 && (await admin.getByRole("link", { name: "Impulsar con un anuncio" }).count()) === 0);
+  await shot(admin, "video-publicado.png");
+  await sleep(3500);
+  await admin.goto(`${APP}/estadisticas`);
+  check(
+    "el worker no lee estadísticas del Reel, y la pantalla Estadísticas no lo lista",
+    Number((await db.sql("SELECT COUNT(*) c FROM PostTargetMetrics WHERE targetId IN (SELECT id FROM PostTarget WHERE postId=?)", [reel.id]))[0].c) === 0 && !(await admin.content()).includes(reel.text),
+  );
+  const boostTry = await db.sql("SELECT COUNT(*) c FROM AdPromotion WHERE postId=?", [reel.id]);
+  check("y no hay anuncios creados a partir de un video", Number(boostTry[0].c) === 0);
+
+  // --- una historia con video (Facebook: video_stories; Instagram: contenedor STORIES con video_url), sin texto
+  fake.setScenario({ videoProcessing: 0 });
+  const vStory = await makePost({ format: "STORY", status: "DRAFT", text: "", targets: ["acc-fb-reservi", "acc-ig-reservi"] });
+  await addVideo(vStory.id);
+  const sentS0 = fake.published().length;
+  await schedulePast(vStory.id);
+  check("la historia con video se publica en los 2 destinos", await driveVideo(vStory.id, ["PUBLISHED"]));
+  const sentStoryVideo = sentVideo(sentS0);
+  const igSV = sentStoryVideo.find((p) => p.kind === "ig-video-story");
+  const fbSV = sentStoryVideo.find((p) => p.kind === "fb-video-story");
+  check(
+    "Instagram recibió un contenedor STORIES con video, sin pie ni portada, y Facebook un video_stories sin descripción",
+    !!igSV && igSV.caption === null && igSV.shareToFeed === null && !igSV.fields.includes("cover_url") && !!fbSV && !fbSV.fields.includes("description") && !fbSV.fields.includes("video_state") && fbSV.sha256 === sha(goodMp4),
+  );
+  const svTargets = await targetsOf(vStory.id);
+  check(
+    "cada destino enlaza a su historia",
+    svTargets.every((t) => t.status === "PUBLISHED" && t.attempts === 1) && svTargets.find((t) => t.accountId === "acc-fb-reservi").externalUrl.startsWith("https://www.facebook.com/stories/P-1/") && svTargets.find((t) => t.accountId === "acc-ig-reservi").externalUrl.startsWith("https://www.instagram.com/stories/"),
+    JSON.stringify(svTargets.map((t) => t.externalUrl)),
+  );
+
+  // --- fallos: Instagram rechaza el video al procesarlo; Facebook también; y publicar sin respuesta clara NO se repite
+  fake.setScenario({ videoProcessing: 0, videoFail: "ig" });
+  const igFail = await makePost({ status: "DRAFT", text: `Reel que Instagram rechaza ${tag()}`, targets: ["acc-ig-reservi"] });
+  await addVideo(igFail.id);
+  await schedulePast(igFail.id);
+  check("si Instagram rechaza el video al procesarlo, la publicación falla con su motivo y sin reintentos automáticos", (await driveVideo(igFail.id, ["FAILED"])) && /Instagram rechazó el video/.test((await targetsOf(igFail.id))[0].error ?? "") && (await targetsOf(igFail.id))[0].retryIn === null);
+  fake.setScenario({ videoFail: null });
+  const igPublishedBefore = fake.published().filter((p) => p.kind === "ig-publish").length;
+  await admin.goto(`${APP}/publicaciones/${igFail.id}`);
+  await admin.getByRole("button", { name: "Reintentar" }).click();
+  check("«Reintentar» empieza de cero (otro contenedor) y esta vez se publica", await waitFor(async () => ((await targetsOf(igFail.id))[0].status === "PENDING" || (await postRow(igFail.id)).status === "PUBLISHING" || (await postRow(igFail.id)).status === "PUBLISHED" ? true : null), { timeout: 15_000 }) && (await driveVideo(igFail.id, ["PUBLISHED"])) && fake.published().filter((p) => p.kind === "ig-reel" && p.account === "IG-1").length >= 2 && fake.published().filter((p) => p.kind === "ig-publish").length === igPublishedBefore + 1);
+
+  fake.setScenario({ videoFail: "fb" });
+  const fbFail = await makePost({ status: "DRAFT", text: `Reel que Facebook rechaza ${tag()}`, targets: ["acc-fb-reservi"] });
+  await addVideo(fbFail.id);
+  await schedulePast(fbFail.id);
+  check("si Facebook rechaza el video al procesarlo, falla con el motivo que dio Facebook", (await driveVideo(fbFail.id, ["FAILED"])) && /Resolution too low/.test((await targetsOf(fbFail.id))[0].error ?? ""));
+  fake.setScenario({ videoFail: null });
+
+  fake.setScenario({ videoPublishFail: "server-after" });
+  const ambiguous = await makePost({ status: "DRAFT", text: `Reel con respuesta dudosa ${tag()}`, targets: ["acc-fb-reservi", "acc-ig-reservi"] });
+  await addVideo(ambiguous.id);
+  const sentA0 = fake.published().length;
+  await schedulePast(ambiguous.id);
+  check("si publicar responde error pero Meta SÍ publicó, los dos destinos quedan fallidos pidiendo revisar", await driveVideo(ambiguous.id, ["FAILED"]));
+  await sleep(4000);
+  const ambTargets = await targetsOf(ambiguous.id);
+  const sentAmb = sentVideo(sentA0);
+  check(
+    "y no se reintenta solo: cada red tiene UNA sola publicación (nada duplicado) y el mensaje pide revisar antes de reintentar",
+    ambTargets.every((t) => t.status === "FAILED" && t.attempts === 1 && t.retryIn === null && /No se pudo confirmar/.test(t.error ?? "") && /para no duplicarlo/.test(t.error ?? "")) && sentAmb.filter((p) => p.kind === "fb-reel").length === 1 && sentAmb.filter((p) => p.kind === "ig-publish").length === 1,
+    JSON.stringify(ambTargets.map((t) => [t.status, t.attempts, t.error])),
+  );
+  fake.setScenario({ videoProcessing: 0, videoFail: null, videoPublishFail: null });
+  calm();
 
   // ------------------------------------------------------------ 4. «publicar ahora» y choque entre procesos
   // A (con worker) y B (sin worker, pero que publica al pulsar el botón) compiten por las mismas filas.

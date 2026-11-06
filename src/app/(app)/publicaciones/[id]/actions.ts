@@ -41,7 +41,7 @@ function load(id: string) {
       brandId: true,
       brand: { select: { timezone: true } },
       targets: { select: { id: true, status: true, account: { select: { name: true, kind: true, status: true, brandId: true, scopes: true } } } },
-      media: { select: { mimeType: true, width: true, height: true }, orderBy: { position: "asc" } },
+      media: { select: { kind: true, mimeType: true, width: true, height: true, size: true, durationMs: true, videoInfo: true }, orderBy: { position: "asc" } },
     },
   });
 }
@@ -208,9 +208,10 @@ export async function retryPost(_prev: FormState, formData: FormData): Promise<F
   if (issues) return { error: `Antes de reintentar hay que corregir esto:\n${issues}` };
 
   // Solo se reintentan los destinos que fallaron; los que ya salieron no se tocan (no se publica dos veces).
+  // Un video vuelve a empezar de cero (otro contenedor / otra subida): su id anterior ya no sirve.
   await db.postTarget.updateMany({
     where: { postId: p.post.id, status: "FAILED" },
-    data: { status: "PENDING", attempts: 0, error: null, nextAttemptAt: null, lockedAt: null },
+    data: { status: "PENDING", attempts: 0, error: null, nextAttemptAt: null, lockedAt: null, remoteId: null, remoteStartedAt: null },
   });
   return sendNow(p.post.id, p.user.id, ["FAILED", "PARTIAL"], "post.retry");
 }
@@ -226,7 +227,7 @@ export async function reopenPost(_prev: FormState, formData: FormData): Promise<
   if (!ok) return { error: "La publicación cambió mientras tanto. Recarga la página." };
   await db.postTarget.updateMany({
     where: { postId: p.post.id, status: "FAILED" },
-    data: { status: "PENDING", attempts: 0, error: null, nextAttemptAt: null, lockedAt: null },
+    data: { status: "PENDING", attempts: 0, error: null, nextAttemptAt: null, lockedAt: null, remoteId: null, remoteStartedAt: null },
   });
   await audit("post.reopened", { userId: p.user.id, target: p.post.id });
   refresh(p.post.id);

@@ -1,8 +1,9 @@
 import "server-only";
 import { env } from "@/lib/env";
 import { MAX_IMAGES_PER_POST } from "@/lib/media-format";
-import { MetaApiError } from "@/lib/meta/errors";
-import { graphGet, graphPost } from "@/lib/meta/graph";
+import { requireMetaConfig } from "@/lib/meta/config";
+import { MetaApiError, type GraphErrorBody } from "@/lib/meta/errors";
+import { graphGet, graphPost, type GraphParams } from "@/lib/meta/graph";
 
 /** Fallo al publicar, ya clasificado: `retryable` dice si tiene sentido volver a intentarlo. */
 export class PublishError extends Error {
@@ -216,11 +217,175 @@ export async function publishStoryToInstagram(ig: Account, image: PublishImage, 
   return { externalId: published.id, url: await instagramPermalink(ig, published.id) };
 }
 
+// ---------------------------------------------------------------------------
+// Video: Reels e historias con video (se publican por fases: ver src/lib/publishing/video.ts)
+// ---------------------------------------------------------------------------
+
+export type PublishVideo = {
+  size: number;
+  mimeType: string;
+  /** URL publica del video; Instagram lo descarga de ahi (vacia si el destino no la usa). */
+  publicUrl: string;
+  /** URL publica de la portada (JPG), si hay. */
+  coverUrl: string | null;
+  /** Lee el archivo entero: Facebook recibe los bytes directamente. */
+  read: () => Promise<Uint8Array>;
+};
+
+/** Como va un video en la red: procesandose, listo (Instagram: puede publicarse; Facebook: ya esta publicado) o rechazado. */
+export type VideoProgress = { state: "processing" } | { state: "ready" } | { state: "failed"; message: string };
+
+/** La subida de un video grande puede tardar: margen de 8 minutos (menos que lo que tarda en darse por interrumpida). */
+const UPLOAD_TIMEOUT_MS = 8 * 60_000;
+
 /**
- * URL por la que Meta descargara la imagen para Instagram. Tiene que ser publica y con HTTPS: si APP_URL es
- * localhost o http, Instagram no podria bajarla y fallaria sin explicar por que, asi que se avisa antes.
+ * Un fallo sin respuesta clara de Meta en el paso que PUBLICA (red caida, error 5xx, "error desconocido"): no se sabe si
+ * la publicacion salio. Repetirlo a ciegas podria duplicarla, asi que no se reintenta solo y se pide revisar.
  */
-export function publicMediaUrl(storageKey: string): string {
+function ambiguous(e: unknown, what: string): never {
+  if (e instanceof MetaApiError && (e.network || e.status >= 500 || e.code === 1 || e.code === 2)) {
+    throw new PublishError(`No se pudo confirmar si ${what}. Revisa en la red social antes de volver a intentarlo, para no duplicarlo.`, false);
+  }
+  throw e;
+}
+
+/** Instagram, fase 1: crea el contenedor del Reel (o de la historia con video); Meta descarga el video de nuestra URL publica. */
+export async function createInstagramVideoContainer(ig: Account, video: PublishVideo, opts: { story: boolean; caption: string }): Promise<string> {
+  const params: GraphParams = opts.story
+    ? { media_type: "STORIES", video_url: video.publicUrl }
+    : { media_type: "REELS", video_url: video.publicUrl, caption: opts.caption, share_to_feed: true, ...(video.coverUrl ? { cover_url: video.coverUrl } : {}) };
+  const container = await graphPost<{ id: string }>(`${ig.externalId}/media`, { token: ig.token, params });
+  return container.id;
+}
+
+/** Instagram, fase 2: como va el procesamiento del contenedor. */
+export async function checkInstagramContainer(ig: Account, containerId: string): Promise<VideoProgress> {
+  const s = await graphGet<{ status_code?: string; status?: string }>(containerId, { token: ig.token, params: { fields: "status_code,status" } });
+  switch (s.status_code) {
+    case "ERROR":
+      return { state: "failed", message: `Instagram rechazó el video${s.status ? `: ${s.status.slice(0, 160)}` : ""}.` };
+    case "EXPIRED":
+      return { state: "failed", message: "Instagram descartó el video porque no se publicó a tiempo (los contenedores duran 24 horas). Reintenta la publicación." };
+    case "PUBLISHED":
+      return { state: "failed", message: "Instagram indica que este video ya se publicó. Revisa en Instagram antes de volver a intentarlo, para no duplicarlo." };
+    case "IN_PROGRESS":
+      return { state: "processing" };
+    default: // FINISHED (o sin dato, como en las fotos)
+      return { state: "ready" };
+  }
+}
+
+/** Instagram, fase 3 (irreversible): publica el contenedor ya procesado. Si la respuesta no es clara, no se repite solo. */
+export async function publishInstagramContainer(ig: Account, containerId: string): Promise<PublishResult> {
+  const published = await graphPost<{ id: string }>(`${ig.externalId}/media_publish`, { token: ig.token, params: { creation_id: containerId } }).catch((e) =>
+    ambiguous(e, "Instagram publicó el video"),
+  );
+  return { externalId: published.id, url: await instagramPermalink(ig, published.id) };
+}
+
+/** Facebook, fase 1: abre la sesion de subida de un Reel (o de una historia con video). */
+export async function startFacebookVideoUpload(page: Account, story: boolean): Promise<{ videoId: string; uploadUrl: string }> {
+  const res = await graphPost<{ video_id?: string; upload_url?: string }>(`${page.externalId}/${story ? "video_stories" : "video_reels"}`, {
+    token: page.token,
+    params: { upload_phase: "start" },
+  });
+  if (!res.video_id || !res.upload_url) throw new PublishError("Facebook no devolvió los datos para subir el video. Se reintentará.", true);
+  return { videoId: res.video_id, uploadUrl: res.upload_url };
+}
+
+/** El token solo se manda a servidores de Meta (o al de pruebas, que solo puede ser local). */
+function assertUploadHost(uploadUrl: string): URL {
+  let url: URL;
+  try {
+    url = new URL(uploadUrl);
+  } catch {
+    throw new PublishError("Facebook devolvió una dirección de subida no válida. Se reintentará.", true);
+  }
+  const testHost = new URL(requireMetaConfig().graphBase).hostname;
+  const ok = url.hostname === testHost || url.hostname === "rupload.facebook.com" || url.hostname.endsWith(".facebook.com");
+  if (!ok || (url.protocol !== "https:" && url.hostname !== testHost)) {
+    throw new PublishError("Facebook devolvió una dirección de subida que no es de Meta. Se canceló el envío del video.", false);
+  }
+  return url;
+}
+
+/** Facebook, fase 2: sube los bytes del video a la direccion de subida (rupload.facebook.com), con el token de la pagina. */
+export async function uploadFacebookVideoBytes(uploadUrl: string, token: string, video: PublishVideo): Promise<void> {
+  const url = assertUploadHost(uploadUrl);
+  const bytes = await video.read();
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `OAuth ${token}`, offset: "0", file_size: String(bytes.length), "content-type": "application/octet-stream" },
+      body: bytes as unknown as BodyInit,
+      cache: "no-store",
+      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+    });
+  } catch {
+    // No propagamos el error original: podria incluir la URL.
+    throw new MetaApiError({ message: "Sin respuesta de Meta.", network: true });
+  }
+  const json = (await res.json().catch(() => null)) as (GraphErrorBody & { success?: boolean; debug_info?: { message?: string } }) | null;
+  if (!res.ok || json?.error) {
+    if (json?.error) throw MetaApiError.fromResponse(res.status, json);
+    throw new MetaApiError({ message: json?.debug_info?.message ?? `Meta respondio con HTTP ${res.status}.`, status: res.status });
+  }
+  if (json?.success !== true) throw new PublishError("Facebook no confirmó la subida del video. Se reintentará.", true);
+}
+
+/** Facebook, fase 3 (irreversible): da por terminada la subida y pide publicar. Si la respuesta no es clara, no se repite solo. */
+export async function finishFacebookVideoUpload(page: Account, videoId: string, opts: { story: boolean; description: string }): Promise<{ postId: string | null }> {
+  const params: GraphParams = opts.story
+    ? { upload_phase: "finish", video_id: videoId }
+    : { upload_phase: "finish", video_id: videoId, video_state: "PUBLISHED", description: opts.description };
+  const res = await graphPost<{ success?: boolean; post_id?: string }>(`${page.externalId}/${opts.story ? "video_stories" : "video_reels"}`, { token: page.token, params }).catch((e) =>
+    ambiguous(e, "Facebook recibió el video"),
+  );
+  if (res.success !== true && !res.post_id) {
+    throw new PublishError("Facebook no confirmó que recibió el video. Revisa en la página antes de volver a intentarlo, para no duplicarlo.", false);
+  }
+  return { postId: res.post_id ?? null };
+}
+
+type VideoPhase = { status?: string; error?: { message?: string } };
+const phaseDone = (s?: string) => s === "complete" || s === "completed";
+
+/** Facebook, fase 4: como va el procesamiento y la publicacion del video ya enviado. */
+export async function checkFacebookVideo(page: Account, videoId: string): Promise<VideoProgress> {
+  const res = await graphGet<{ status?: { video_status?: string; uploading_phase?: VideoPhase; processing_phase?: VideoPhase; publishing_phase?: VideoPhase & { publish_status?: string } } }>(videoId, {
+    token: page.token,
+    params: { fields: "status" },
+  });
+  const s = res.status ?? {};
+  const phases = [s.publishing_phase, s.processing_phase, s.uploading_phase];
+  if (s.video_status === "error" || phases.some((p) => p?.status === "error")) {
+    const reason = phases.map((p) => p?.error?.message).find((m) => m);
+    return { state: "failed", message: `Facebook rechazó el video${reason ? `: ${reason.slice(0, 160)}` : ""}.` };
+  }
+  if (s.video_status === "expired" || s.video_status === "upload_failed") {
+    return { state: "failed", message: "Facebook no pudo recibir el video (la subida falló o caducó). Reintenta la publicación." };
+  }
+  if (s.publishing_phase?.publish_status === "published" || phaseDone(s.publishing_phase?.status)) return { state: "ready" };
+  if (!s.publishing_phase && s.video_status === "ready") return { state: "ready" };
+  return { state: "processing" };
+}
+
+/** Datos de la publicacion de video ya publicada en Facebook: su id y su enlace (el de la historia, si Meta la lista). */
+export async function facebookVideoResult(page: Account, videoId: string, postId: string | null, story: boolean): Promise<PublishResult> {
+  if (story) {
+    const id = postId ?? videoId;
+    return { externalId: id, url: await facebookStoryUrl(page, id) };
+  }
+  return { externalId: videoId, url: `https://www.facebook.com/reel/${videoId}` };
+}
+
+/**
+ * URL por la que Meta descargara la imagen o el video para Instagram. Tiene que ser publica y con HTTPS: si APP_URL es
+ * localhost o http, Instagram no podria bajarlo y fallaria sin explicar por que, asi que se avisa antes.
+ * `what` es lo que se nombra en el mensaje.
+ */
+export function publicMediaUrl(storageKey: string, what = "la imagen"): string {
   const e = env();
   const explicit = e.MEDIA_PUBLIC_BASE_URL;
   const base = (explicit ?? e.APP_URL).replace(/\/$/, "");
@@ -228,7 +393,7 @@ export function publicMediaUrl(storageKey: string): string {
     const host = new URL(base).hostname;
     if (!base.startsWith("https://") || host === "localhost" || host === "127.0.0.1" || host.endsWith(".local")) {
       throw new PublishError(
-        "Instagram descarga la imagen desde internet y esta app no es accesible desde fuera (APP_URL es local o no usa HTTPS). Pon la app en un servidor con dominio y HTTPS y actualiza APP_URL.",
+        `Instagram descarga ${what} desde internet y esta app no es accesible desde fuera (APP_URL es local o no usa HTTPS). Pon la app en un servidor con dominio y HTTPS y actualiza APP_URL.`,
         false,
       );
     }
@@ -242,8 +407,19 @@ export function publicMediaUrl(storageKey: string): string {
 
 export type ClassifiedError = { message: string; retryable: boolean; expired: boolean };
 
-/** Convierte cualquier fallo al publicar en un mensaje en español y la decision de reintentar o no. */
-export function classifyPublishError(e: unknown): ClassifiedError {
+/** Rechazos propios de Facebook para un video (codigos documentados en la guia de Reels): que arreglar en el video. */
+const FACEBOOK_VIDEO_ERRORS: Record<number, string> = {
+  1363040: "su proporción no está entre 9:16 (vertical) y 16:9 (horizontal).",
+  1363127: "su resolución es muy baja (el mínimo es 540 × 960 píxeles).",
+  1363128: "su duración no es válida (entre 3 y 90 segundos; las historias, hasta 60).",
+  1363129: "sus fotogramas por segundo no son válidos (entre 24 y 60).",
+};
+
+/**
+ * Convierte cualquier fallo al publicar en un mensaje en español y la decision de reintentar o no.
+ * `video`: la publicacion lleva un video (algunos mensajes nombran el video en lugar de la imagen).
+ */
+export function classifyPublishError(e: unknown, ctx: { video?: boolean } = {}): ClassifiedError {
   if (e instanceof PublishError) return { message: e.message, retryable: e.retryable, expired: e.expired };
 
   if (e instanceof MetaApiError) {
@@ -268,9 +444,19 @@ export function classifyPublishError(e: unknown): ClassifiedError {
         expired: false,
       };
     }
+    const facebookVideo = e.code !== undefined ? FACEBOOK_VIDEO_ERRORS[e.code] : undefined;
+    if (facebookVideo) return { message: `Facebook rechazó el video: ${facebookVideo}`, retryable: false, expired: false };
+    if (ctx.video && e.subcode === 2207026) {
+      return { message: "Instagram no acepta el formato de este video. Expórtalo de nuevo como MP4 con H.264 y AAC.", retryable: false, expired: false };
+    }
+    if (ctx.video && e.subcode === 2207003) {
+      return { message: "Instagram tardó demasiado en descargar el video desde tu servidor. Se reintentará.", retryable: true, expired: false };
+    }
     if (e.subcode === 2207052 || e.code === 9004 || /media.*(download|fetch)|could not be (fetched|downloaded)/i.test(e.message)) {
       return {
-        message: "Instagram no pudo descargar la imagen desde tu servidor. La app debe ser accesible desde internet por HTTPS.",
+        message: ctx.video
+          ? "Instagram no pudo descargar el video desde tu servidor. La app debe ser accesible desde internet por HTTPS y el video tiene que seguir disponible."
+          : "Instagram no pudo descargar la imagen desde tu servidor. La app debe ser accesible desde internet por HTTPS.",
         retryable: true,
         expired: false,
       };

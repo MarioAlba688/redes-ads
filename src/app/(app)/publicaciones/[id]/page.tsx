@@ -31,9 +31,10 @@ export const metadata: Metadata = { title: "Publicación" };
 const EVENT_LABELS: Record<string, string> = {
   "post.created": "creó el borrador",
   "post.updated": "editó el borrador",
-  "post.media_added": "añadió una imagen",
-  "post.media_removed": "quitó una imagen",
+  "post.media_added": "añadió una imagen o un video",
+  "post.media_removed": "quitó una imagen o un video",
   "post.media_moved": "cambió el orden de las imágenes",
+  "post.media_cover": "cambió la portada del video",
   "post.reopened": "la volvió a borrador para corregirla",
   "post.submitted": "la envió a revisión",
   "post.returned": "la devolvió con una nota",
@@ -76,6 +77,8 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
   const status = post.status as PostStatusName;
   const format = post.format as PostFormatName;
   const story = format === "STORY";
+  // Reel o historia con video: lleva un solo video y se publica por fases (la red social lo procesa durante minutos).
+  const video = post.media.find((m) => m.kind === "VIDEO") ?? null;
   const canWrite = can(user.role, "content.create");
   // Imagenes que la base de datos conoce pero cuyo archivo ya no esta en este servidor (redespliegue sin volumen, o otra copia de la app).
   const missingMedia = new Set((await Promise.all(post.media.map(async (m) => ((await imageExists(m.storageKey)) ? null : m.id)))).filter((x): x is string => x !== null));
@@ -186,7 +189,18 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
             aiBrief: post.aiBrief,
             format,
           }}
-          media={post.media.map((m) => ({ id: m.id, url: mediaPath(m.storageKey), width: m.width, height: m.height, name: m.originalName, missing: missingMedia.has(m.id) }))}
+          media={post.media.map((m) => ({
+            id: m.id,
+            url: mediaPath(m.storageKey),
+            width: m.width,
+            height: m.height,
+            name: m.originalName,
+            missing: missingMedia.has(m.id),
+            kind: m.kind,
+            durationMs: m.durationMs,
+            size: m.size,
+            coverUrl: m.thumbKey ? mediaPath(m.thumbKey) : null,
+          }))}
           ai={{ ...ai, canManage: can(user.role, "ai.manage") }}
         />
         <div className="mt-6 space-y-6">
@@ -207,7 +221,7 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
       <Card className="space-y-5 p-5">
         {story ? (
           <p className="text-sm text-muted">
-            Historia: una foto que dura 24 horas. Sale sin texto ni enlace.
+            Historia: {video ? "un video" : "una foto"} que dura 24 horas. Sale sin texto ni enlace.
             {post.text && (
               <>
                 {" "}
@@ -225,6 +239,18 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
                 <div key={m.id} className="w-full">
                   <RestoreImage postId={post.id} mediaId={m.id} width={m.width} height={m.height} canRestore={canRestore} />
                 </div>
+              ) : m.kind === "VIDEO" ? (
+                // El video se sirve por nuestra ruta /media (por partes y con Range, para poder avanzar en el).
+                <video
+                  key={m.id}
+                  src={mediaPath(m.storageKey)}
+                  poster={m.thumbKey ? mediaPath(m.thumbKey) : undefined}
+                  controls
+                  preload="metadata"
+                  playsInline
+                  aria-label={story ? "Video de la historia" : "Video de la publicación"}
+                  className="max-h-96 max-w-full rounded-lg border border-border bg-black"
+                />
               ) : (
                 // Imagen dinamica servida por nuestra ruta /media: next/image no aporta nada aqui.
                 // eslint-disable-next-line @next/next/no-img-element
@@ -271,8 +297,11 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
                   <Badge tone={t.status === "PUBLISHED" ? "success" : t.status === "FAILED" ? "danger" : "neutral"}>
                     {TARGET_STATUS_LABELS[t.status]}
                   </Badge>
-                  {t.status === "PENDING" && t.nextAttemptAt && (
-                    <span className="text-xs text-muted">reintento {dateFmt.format(t.nextAttemptAt)}</span>
+                  {t.status === "PENDING" && t.remoteId ? (
+                    // Un video ya enviado: la red social lo esta procesando y se vuelve a consultar sola.
+                    <span className="text-xs text-muted">procesando el video en {t.account.kind === "INSTAGRAM_PROFILE" ? "Instagram" : "Facebook"}…</span>
+                  ) : (
+                    t.status === "PENDING" && t.nextAttemptAt && <span className="text-xs text-muted">reintento {dateFmt.format(t.nextAttemptAt)}</span>
                   )}
                   {t.externalUrl && t.status === "PUBLISHED" && (
                     <a href={t.externalUrl} target="_blank" rel="noopener noreferrer" className="ml-auto text-xs text-primary hover:underline">
@@ -282,7 +311,10 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
                   {t.status === "PUBLISHED" && story && (
                     <span className="basis-full text-xs text-muted">Las historias duran 24 horas: no tienen estadísticas ni se pueden impulsar con un anuncio.</span>
                   )}
-                  {t.status === "PUBLISHED" && !story && (
+                  {t.status === "PUBLISHED" && !story && video && (
+                    <span className="basis-full text-xs text-muted">Los videos todavía no tienen estadísticas en esta app ni se pueden impulsar con un anuncio desde aquí.</span>
+                  )}
+                  {t.status === "PUBLISHED" && !story && !video && (
                     <span className="basis-full text-xs text-muted">
                       {t.metrics && interactions(t.metrics) !== null ? (
                         <>

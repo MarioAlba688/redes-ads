@@ -29,9 +29,10 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/posts/[
   const { id, mediaId } = await ctx.params;
   const media = await db.postMedia.findFirst({
     where: { id: mediaId, postId: id },
-    select: { id: true, storageKey: true, width: true, height: true, post: { select: { status: true } } },
+    select: { id: true, kind: true, storageKey: true, width: true, height: true, post: { select: { status: true } } },
   });
   if (!media) return fail(404, "Esa imagen ya no existe.");
+  if (media.kind === "VIDEO") return fail(409, "Los videos no se restauran desde aquí: si su archivo se perdió, crea una publicación nueva y sube el video de nuevo.");
   if (!RESTORABLE.includes(media.post.status)) return fail(409, "Solo se puede restaurar la imagen de una publicación que ya se publicó. En un borrador, quita la imagen y sube otra.");
   if (await imageExists(media.storageKey)) return fail(409, "El archivo de esta imagen está en el servidor: no hace falta restaurarlo.");
 

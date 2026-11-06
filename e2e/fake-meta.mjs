@@ -70,6 +70,10 @@ const DEFAULT_SCENARIO = {
   igProcessing: 0, // cuantas consultas del contenedor de Instagram responden IN_PROGRESS antes de FINISHED
   igContainer: "ok", // ok | error (el contenedor termina en ERROR)
   storiesList: "ok", // ok | fail: el listado de historias de la pagina (GET <pagina>/stories) responde error (la app usa entonces el enlace de la pagina)
+  // --- video (Reels e historias con video) ---
+  videoProcessing: 0, // cuantas consultas de estado de un video (contenedor de Instagram o video de Facebook) responden "procesando" antes de terminar
+  videoFail: null, // null | "ig" (el contenedor de video termina en ERROR) | "fb" (Facebook rechaza el video al procesarlo)
+  videoPublishFail: null, // null | "server" (el paso que publica responde 500 SIN haber publicado) | "server-after" (publica y luego responde 500: Meta no deja claro si salio)
   // --- estadisticas de lo publicado ---
   stats: "ok", // ok | noinsights (sin permiso de insights) | nousercontent (sin pages_read_user_content: leer reacciones/comentarios da error) | badmetric (Meta retiro una metrica) | ratelimit (limite de uso) | gone (la publicacion ya no existe) | hidelikes (Instagram sin like_count)
   statsBoost: 0, // se suma a todas las cifras: sirve para comprobar que una nueva lectura las actualiza
@@ -93,6 +97,31 @@ export function igStatsFor(n, boost = 0) {
 const OWNER_TOKEN = { "P-1": PAGE_TOKEN, "IG-1": PAGE_TOKEN, "P-2": "PAGE-TOKEN-2222" };
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+
+/** Mira un MP4/MOV como lo haria Meta: ¿empieza con ftyp?, ¿el indice (moov) esta antes de los datos (mdat)? */
+export function isoVideoInfo(bytes) {
+  let offset = 0;
+  let ftyp = false;
+  let moov = -1;
+  let mdat = -1;
+  let first = true;
+  while (offset + 8 <= bytes.length) {
+    let size = bytes.readUInt32BE(offset);
+    const type = bytes.toString("latin1", offset + 4, offset + 8);
+    if (size === 1 && offset + 16 <= bytes.length) size = Number(bytes.readBigUInt64BE(offset + 8));
+    else if (size === 0) size = bytes.length - offset;
+    if (size < 8 || offset + size > bytes.length) return { ok: false, truncated: true };
+    if (first) {
+      if (type !== "ftyp") return { ok: false, truncated: false };
+      ftyp = true;
+      first = false;
+    }
+    if (type === "moov" && moov < 0) moov = offset;
+    if (type === "mdat" && mdat < 0) mdat = offset;
+    offset += size;
+  }
+  return { ok: ftyp && moov >= 0 && mdat >= 0, truncated: false, fastStart: moov >= 0 && mdat >= 0 && moov < mdat };
+}
 
 /** Errores que Meta devuelve al publicar (codigos reales de la Graph API). */
 const PUBLISH_FAILURES = {
@@ -131,6 +160,8 @@ export function startFakeMeta(port, expectedRedirectUri) {
   let containers = new Map(); // contenedores de Instagram creados
   let unpublishedPhotos = new Map(); // fotos subidas con published=false (para adjuntarlas a una publicacion o a una historia)
   let stories = []; // historias de pagina creadas (GET <pagina>/stories las lista)
+  let fbVideos = new Map(); // videos de Facebook (Reels e historias): sesion de subida, bytes recibidos y estado
+  let uploads = []; // subidas de bytes a "rupload" (lo que llego, con que cabeceras)
   let seq = 0;
 
   const json = (res, status, body) => {
@@ -162,10 +193,34 @@ export function startFakeMeta(port, expectedRedirectUri) {
       containers = new Map();
       unpublishedPhotos = new Map();
       stories = [];
+      fbVideos = new Map();
+      uploads = [];
       return json(res, 200, {});
     }
     if (url.pathname === "/__requests") return json(res, 200, { requests, lastDialog });
     if (url.pathname === "/__published") return json(res, 200, { published });
+    if (url.pathname === "/__uploads") return json(res, 200, { uploads });
+
+    // --- subida de los bytes de un video a Facebook (rupload.facebook.com): el token va en la cabecera Authorization ---
+    if (req.method === "POST" && url.pathname.startsWith(`/rupload/video-upload/${VERSION}/`)) {
+      const id = url.pathname.split("/").pop();
+      const rec = fbVideos.get(id);
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const bytes = Buffer.concat(chunks);
+      const bad = (status, message, type = "ProcessingFailedError") => json(res, status, { debug_info: { retriable: false, type, message } });
+      if (!rec) return bad(404, "Unknown video upload session");
+      const auth = req.headers.authorization ?? "";
+      const size = Number(req.headers.file_size);
+      const offset = Number(req.headers.offset ?? -1);
+      uploads.push({ video: id, account: rec.account, authOk: auth === `OAuth ${OWNER_TOKEN[rec.account]}`, tokenInUrl: url.search.includes("token"), offset, fileSize: size, received: bytes.length, contentType: req.headers["content-type"] ?? null, sha256: sha256(bytes) });
+      if (auth !== `OAuth ${OWNER_TOKEN[rec.account]}`) return bad(401, "Invalid OAuth access token", "OAuthException");
+      if (offset !== 0 || !Number.isFinite(size) || bytes.length !== size) return bad(400, `Partial request: received ${bytes.length} of ${size} bytes`, "PartialRequestError");
+      const info = isoVideoInfo(bytes);
+      if (!info.ok) return bad(400, "The uploaded file is not a valid video");
+      Object.assign(rec, { uploaded: true, size, received: bytes.length, sha256: sha256(bytes), fastStart: info.fastStart });
+      return json(res, 200, { success: true });
+    }
 
     // --- cuadro de permisos de Facebook (navegador) ---
     if (url.pathname === `/${VERSION}/dialog/oauth`) {
@@ -254,7 +309,7 @@ export function startFakeMeta(port, expectedRedirectUri) {
 
     // --- publicar en una pagina de Facebook o una cuenta de Instagram ---
     if (req.method === "POST") {
-      const m = path.match(/^([^/]+)\/(feed|photos|photo_stories|media|media_publish)$/);
+      const m = path.match(/^([^/]+)\/(feed|photos|photo_stories|media|media_publish|video_reels|video_stories)$/);
       if (!m) return graphError(res, 404, 803, `Unknown path components: ${path}`);
       const [, accountId, edge] = m;
       if (OWNER_TOKEN[accountId] !== token) {
@@ -269,6 +324,40 @@ export function startFakeMeta(port, expectedRedirectUri) {
         }
         const injected = PUBLISH_FAILURES[scenario.publishFail[accountId]];
         if (injected) return injected(fail);
+      }
+
+      const failWith = (status, code, message, extra) => graphError(res, status, code, message, extra);
+      const sent = () => [...body.fields.keys()].filter((k) => k !== "access_token" && k !== "appsecret_proof");
+
+      if (edge === "video_reels" || edge === "video_stories") {
+        // Reel / historia con video de una pagina: abrir la subida (start), subir los bytes a rupload y finalizar (finish).
+        const story = edge === "video_stories";
+        const phase = arg("upload_phase");
+        if (phase === "start") {
+          const id = `FBV-${++seq}`;
+          fbVideos.set(id, { id, account: accountId, story, uploaded: false, finished: false, polls: 0 });
+          return json(res, 200, { video_id: id, upload_url: `http://127.0.0.1:${port}/rupload/video-upload/${VERSION}/${id}` });
+        }
+        if (phase === "finish") {
+          const rec = fbVideos.get(arg("video_id") ?? "");
+          if (!rec || rec.account !== accountId || rec.story !== story) return graphError(res, 400, 100, "(#100) Invalid parameter: video_id is not an open upload session of this page");
+          if (!rec.uploaded) return graphError(res, 400, 100, "(#100) The video upload is not complete");
+          // Meta no documenta que pasa al repetir el paso: el simulador es estricto para que un duplicado no pase desapercibido.
+          if (rec.finished) return graphError(res, 400, 100, "(#100) The video was already published");
+          if (scenario.videoPublishFail === "server") return PUBLISH_FAILURES.server(failWith);
+          rec.finished = true;
+          const record = { kind: story ? "fb-video-story" : "fb-reel", account: accountId, id: rec.id, description: arg("description"), videoState: arg("video_state"), bytes: rec.received, sha256: rec.sha256, fastStart: rec.fastStart, fields: sent() };
+          let postId;
+          if (story) {
+            postId = `${accountId}_${++seq}`;
+            record.postId = postId;
+            stories.push({ account: accountId, post_id: postId, status: "PUBLISHED", media_type: "video", media_id: rec.id, url: `https://www.facebook.com/stories/${accountId}/${seq}` });
+          }
+          published.push(record);
+          if (scenario.videoPublishFail === "server-after") return PUBLISH_FAILURES.server(failWith);
+          return json(res, 200, { success: true, ...(story ? { post_id: postId } : {}) });
+        }
+        return graphError(res, 400, 100, "(#100) The parameter upload_phase is required");
       }
 
       if (edge === "feed") {
@@ -346,6 +435,39 @@ export function startFakeMeta(port, expectedRedirectUri) {
         published.push({ kind: "ig-carousel", account: accountId, caption: arg("caption"), id, children: ids.map((cid) => published.find((p) => p.id === cid)) });
         return json(res, 200, { id });
       }
+      if (edge === "media" && arg("video_url")) {
+        // Reel (media_type=REELS) o historia con video (STORIES): Meta descarga el video de la URL publica que le dimos.
+        const mediaType = arg("media_type");
+        if (mediaType !== "REELS" && mediaType !== "STORIES") return graphError(res, 400, 100, "(#100) media_type must be REELS or STORIES when video_url is given");
+        let fetched;
+        try {
+          const r = await fetch(arg("video_url"));
+          const bytes = Buffer.from(await r.arrayBuffer());
+          const info = isoVideoInfo(bytes);
+          fetched = { status: r.status, contentType: r.headers.get("content-type"), bytes: bytes.length, sha256: sha256(bytes), valid: info.ok, fastStart: info.fastStart === true };
+        } catch (e) {
+          fetched = { status: 0, error: String(e) };
+        }
+        if (fetched.status !== 200) return graphError(res, 400, 9004, "The media could not be fetched from this uri", { error_subcode: 2207052 });
+        // Como Meta: otra cosa que un MP4/MOV, o con el indice (moov) al final, no se acepta.
+        if (!fetched.valid || !fetched.fastStart || !String(fetched.contentType ?? "").startsWith("video/")) {
+          return graphError(res, 400, 352, "The video format is not supported", { error_subcode: 2207026 });
+        }
+        let cover = null;
+        if (arg("cover_url")) {
+          try {
+            const r = await fetch(arg("cover_url"));
+            const b = Buffer.from(await r.arrayBuffer());
+            cover = { status: r.status, contentType: r.headers.get("content-type"), bytes: b.length, sha256: sha256(b) };
+          } catch (e) {
+            cover = { status: 0, error: String(e) };
+          }
+        }
+        const id = `CONT-${++seq}`;
+        containers.set(id, { account: accountId, polls: 0, video: true, story: mediaType === "STORIES", published: false });
+        published.push({ kind: mediaType === "REELS" ? "ig-reel" : "ig-video-story", account: accountId, caption: arg("caption"), videoUrl: arg("video_url"), coverUrl: arg("cover_url"), shareToFeed: arg("share_to_feed"), fetched, cover, id, fields: sent() });
+        return json(res, 200, { id });
+      }
       if (edge === "media") {
         // Historia: el contenedor lleva media_type=STORIES y una imagen (o video); el resto es igual que una publicacion.
         const isStory = arg("media_type") === "STORIES";
@@ -376,8 +498,16 @@ export function startFakeMeta(port, expectedRedirectUri) {
       if (!container || container.account !== accountId) return graphError(res, 400, 100, "(#100) Invalid creation_id");
       // Un hijo de carrusel no se publica solo: se publica el padre.
       if (container.child) return graphError(res, 400, 9007, "(#9007) The media is not ready to be published. Carousel items are published through their parent container.");
+      if (container.video) {
+        // Un video todavia procesandose no se puede publicar, y un contenedor ya publicado no se publica otra vez.
+        if (container.polls <= scenario.videoProcessing) return graphError(res, 400, 9007, "The media is not ready for publishing, please wait for a moment", { error_subcode: 2207027 });
+        if (container.published) return graphError(res, 400, 9007, "(#9007) The media container was already published", { error_subcode: 2207020 });
+        if (scenario.videoPublishFail === "server") return PUBLISH_FAILURES.server(failWith);
+        container.published = true;
+      }
       const id = `IGM-${++seq}`;
-      published.push({ kind: "ig-publish", account: accountId, creation: arg("creation_id"), id, carousel: !!container.children, story: !!container.story });
+      published.push({ kind: "ig-publish", account: accountId, creation: arg("creation_id"), id, carousel: !!container.children, story: !!container.story, video: !!container.video });
+      if (container.video && scenario.videoPublishFail === "server-after") return PUBLISH_FAILURES.server(failWith);
       return json(res, 200, { id });
     }
 
@@ -450,8 +580,31 @@ export function startFakeMeta(port, expectedRedirectUri) {
       const container = containers.get(containerMatch[1]);
       if (!container) return graphError(res, 400, 100, "(#100) Unsupported get request");
       container.polls++;
-      const status_code = scenario.igContainer === "error" ? "ERROR" : container.polls <= scenario.igProcessing ? "IN_PROGRESS" : "FINISHED";
+      // Un contenedor de video tiene sus propios escenarios (videoProcessing / videoFail); el resto, los de siempre.
+      const failed = container.video ? scenario.videoFail === "ig" : scenario.igContainer === "error";
+      const processing = container.video ? scenario.videoProcessing : scenario.igProcessing;
+      const status_code = failed ? "ERROR" : container.polls <= processing ? "IN_PROGRESS" : "FINISHED";
       return json(res, 200, { id: containerMatch[1], status_code, ...(status_code === "ERROR" ? { status: "Error: Media upload has failed with error code 2207026" } : {}) });
+    }
+
+    // Estado de un video de Facebook (Reel o historia): subiendo -> procesando -> publicado, o error.
+    const fbVideoMatch = path.match(/^(FBV-\d+)$/);
+    if (req.method === "GET" && fbVideoMatch) {
+      const rec = fbVideos.get(fbVideoMatch[1]);
+      if (!rec || OWNER_TOKEN[rec.account] !== token) return graphError(res, 400, 100, "(#100) Unsupported get request");
+      rec.polls++;
+      const done = { status: "complete" };
+      let status;
+      if (!rec.finished) {
+        status = { video_status: rec.uploaded ? "upload_complete" : "uploading", uploading_phase: { status: rec.uploaded ? "complete" : "in_progress" }, processing_phase: { status: "not_started" }, publishing_phase: { status: "not_started" } };
+      } else if (scenario.videoFail === "fb") {
+        status = { video_status: "error", uploading_phase: done, processing_phase: { status: "error", error: { message: "Resolution too low. Video must have a minimum resolution of 540p." } }, publishing_phase: { status: "not_started" } };
+      } else if (rec.polls <= scenario.videoProcessing) {
+        status = { video_status: "processing", uploading_phase: done, processing_phase: { status: "in_progress" }, publishing_phase: { status: "not_started" } };
+      } else {
+        status = { video_status: "ready", uploading_phase: done, processing_phase: done, publishing_phase: { status: "complete", publish_status: "published", publish_time: Math.floor(Date.now() / 1000) } };
+      }
+      return json(res, 200, { status, id: rec.id });
     }
     const igMediaMatch = path.match(/^(IGM-\d+)$/);
     if (igMediaMatch) {
@@ -512,12 +665,15 @@ export function startFakeMeta(port, expectedRedirectUri) {
           containers = new Map();
           unpublishedPhotos = new Map();
           stories = [];
+          fbVideos = new Map();
+          uploads = [];
           ads.reset();
         },
         ads,
         requests: () => requests,
         lastDialog: () => lastDialog,
         published: () => published,
+        uploads: () => uploads,
       }),
     );
   });

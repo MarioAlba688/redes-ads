@@ -197,6 +197,8 @@ type Resolved = {
 };
 
 const STORY_NOT_PROMOTABLE = "Una historia no se puede promocionar desde la app (dura 24 horas). Elige una publicación normal.";
+const VIDEO_NOT_PROMOTABLE =
+  "Los videos (Reels) todavía no se pueden promocionar desde la app: un anuncio con video necesita otro tipo de creatividad que aún no está probada con dinero real. Elige una publicación con imagen o promociónala desde Meta.";
 
 async function resolveSource(req: CreateRequest): Promise<Result<{ resolved: Resolved }>> {
   if (req.source.kind === "BOOST") {
@@ -207,11 +209,12 @@ async function resolveSource(req: CreateRequest): Promise<Result<{ resolved: Res
         status: true,
         externalId: true,
         account: { select: { kind: true, name: true, externalId: true, metadata: true } },
-        post: { select: { id: true, brandId: true, text: true, format: true } },
+        post: { select: { id: true, brandId: true, text: true, format: true, media: { where: { kind: "VIDEO" }, select: { id: true }, take: 1 } } },
       },
     });
     if (!t || t.status !== "PUBLISHED" || !t.externalId) return fail("Solo se pueden impulsar publicaciones que ya están publicadas.");
     if (t.post.format === "STORY") return fail(STORY_NOT_PROMOTABLE);
+    if (t.post.media.length > 0) return fail(VIDEO_NOT_PROMOTABLE);
     const common = { kind: "BOOST" as const, brandId: t.post.brandId, postId: t.post.id, targetId: t.id, message: t.post.text, image: null };
     if (t.account.kind === "FACEBOOK_PAGE") {
       return { ok: true, resolved: { ...common, pageId: t.account.externalId, instagramUserId: null, instagramBoost: null, facebookPostId: t.externalId } };
@@ -226,10 +229,11 @@ async function resolveSource(req: CreateRequest): Promise<Result<{ resolved: Res
 
   const post = await db.post.findUnique({
     where: { id: req.source.postId },
-    select: { id: true, brandId: true, status: true, format: true, media: { orderBy: { position: "asc" }, take: 1, select: { storageKey: true, mimeType: true } } },
+    select: { id: true, brandId: true, status: true, format: true, media: { orderBy: { position: "asc" }, take: 1, select: { kind: true, storageKey: true, mimeType: true } } },
   });
   if (!post || post.status === "CANCELLED") return fail("Esa publicación no existe o está cancelada.");
   if (post.format === "STORY") return fail(STORY_NOT_PROMOTABLE);
+  if (post.media[0]?.kind === "VIDEO") return fail(VIDEO_NOT_PROMOTABLE);
   const page = await db.socialAccount.findUnique({ where: { id: req.source.pageAccountId }, select: { id: true, kind: true, status: true, brandId: true, externalId: true, name: true } });
   if (!page || page.kind !== "FACEBOOK_PAGE" || page.status !== "ACTIVE") return fail("Elige una página de Facebook conectada para publicar el anuncio.");
   if (page.brandId !== post.brandId) return fail(`La página «${page.name}» no es de la marca de esta publicación.`);

@@ -61,8 +61,8 @@ export default async function NewPromotionPage({ searchParams }: PageProps<"/anu
     }),
     kind === "BOOST"
       ? db.postTarget.findMany({
-          // Una historia dura 24 horas y no se puede impulsar: solo las publicaciones normales.
-          where: { status: "PUBLISHED", externalId: { not: null }, post: { format: "FEED" }, account: { kind: { in: ["FACEBOOK_PAGE", "INSTAGRAM_PROFILE"] } } },
+          // Una historia dura 24 horas y no se puede impulsar: solo las publicaciones normales. Los videos (Reels) tampoco todavia.
+          where: { status: "PUBLISHED", externalId: { not: null }, post: { format: "FEED", media: { none: { kind: "VIDEO" } } }, account: { kind: { in: ["FACEBOOK_PAGE", "INSTAGRAM_PROFILE"] } } },
           orderBy: { publishedAt: "desc" },
           take: 60,
           select: { id: true, publishedAt: true, account: { select: { name: true, kind: true } }, post: { select: { text: true, brandId: true } } },
@@ -70,7 +70,7 @@ export default async function NewPromotionPage({ searchParams }: PageProps<"/anu
       : Promise.resolve([]),
     kind === "AD"
       ? db.post.findMany({
-          where: { status: { not: "CANCELLED" }, format: "FEED" },
+          where: { status: { not: "CANCELLED" }, format: "FEED", media: { none: { kind: "VIDEO" } } },
           orderBy: { createdAt: "desc" },
           take: 60,
           select: { id: true, text: true, brandId: true, status: true, media: { take: 1, orderBy: { position: "asc" }, select: { storageKey: true } }, _count: { select: { media: true } } },
@@ -82,7 +82,7 @@ export default async function NewPromotionPage({ searchParams }: PageProps<"/anu
   const extraTarget =
     kind === "BOOST" && initial && !targets.some((t) => t.id === initial)
       ? await db.postTarget.findFirst({
-          where: { id: initial, status: "PUBLISHED", externalId: { not: null }, post: { format: "FEED" } },
+          where: { id: initial, status: "PUBLISHED", externalId: { not: null }, post: { format: "FEED", media: { none: { kind: "VIDEO" } } } },
           select: { id: true, publishedAt: true, account: { select: { name: true, kind: true } }, post: { select: { text: true, brandId: true } } },
         })
       : null;
@@ -90,7 +90,7 @@ export default async function NewPromotionPage({ searchParams }: PageProps<"/anu
   const extraPost =
     kind === "AD" && initial && !posts.some((p) => p.id === initial)
       ? await db.post.findFirst({
-          where: { id: initial, status: { not: "CANCELLED" }, format: "FEED" },
+          where: { id: initial, status: { not: "CANCELLED" }, format: "FEED", media: { none: { kind: "VIDEO" } } },
           select: { id: true, text: true, brandId: true, status: true, media: { take: 1, orderBy: { position: "asc" }, select: { storageKey: true } }, _count: { select: { media: true } } },
         })
       : null;

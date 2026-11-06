@@ -28,6 +28,9 @@ export function proxy(request: NextRequest) {
   return NextResponse.next();
 }
 
+// /api/posts/<id>/media queda FUERA del proxy a proposito: con el proxy activo Next guarda en memoria solo los primeros
+// 10 MB del cuerpo y deja pasar el resto sin error (experimental.proxyClientMaxBodySize), asi que un video grande se
+// guardaria cortado y danado. Esa ruta valida la sesion por si misma (authorize) y responde 401 en JSON.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|svg|ico|webp)$).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/posts/[^/]+/media$|.*\\.(?:png|jpg|jpeg|svg|ico|webp|mp4|mov)$).*)"],
 };

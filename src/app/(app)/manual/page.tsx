@@ -27,6 +27,7 @@ const TOC = [
   { id: "marcas", label: "5. Asignar a cada marca" },
   { id: "publicar-instagram", label: "6. Publicar en Instagram" },
   { id: "historias", label: "Historias de Facebook e Instagram" },
+  { id: "video", label: "Reels y videos de Facebook e Instagram" },
   { id: "estadisticas", label: "7. Estadísticas de las publicaciones" },
   { id: "anuncios", label: "8. Anuncios" },
   { id: "recomendaciones", label: "9. Cuándo conviene pagar publicidad" },
@@ -364,7 +365,7 @@ export default async function ManualPage() {
           title="Historias de Facebook e Instagram"
           intro={
             <>
-              Una historia es <UI>una sola foto que dura 24 horas</UI>. Se crea en <Link href="/publicaciones/nueva?formato=historia" className="font-medium text-primary hover:underline">Publicaciones → Nueva historia</Link> y sigue el mismo camino que una
+              Una historia es <UI>una sola foto (o un solo video, ver «Reels y videos») que dura 24 horas</UI>. Se crea en <Link href="/publicaciones/nueva?formato=historia" className="font-medium text-primary hover:underline">Publicaciones → Nueva historia</Link> y sigue el mismo camino que una
               publicación: borrador, revisión, aprobación, fecha y publicación automática, en cada página de Facebook y cuenta de Instagram que elijas.
             </>
           }
@@ -372,7 +373,7 @@ export default async function ManualPage() {
           <h3 className="text-sm font-semibold">La foto</h3>
           <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed">
             <li>
-              Una sola por historia. Si quieres varias, haz una historia por foto. Por ahora no se publican videos.
+              Una sola por historia. Si quieres varias, haz una historia por foto. Una historia también puede ser un video (hasta 60 segundos): lo explica la sección siguiente.
             </li>
             <li>
               Lo ideal es <UI>vertical 9:16</UI> (por ejemplo 1080 × 1920 píxeles). Otra proporción no se rechaza, pero se verá con bandas o recortada: la app te avisa al subirla.
@@ -394,6 +395,89 @@ export default async function ManualPage() {
             <li>No tiene estadísticas en esta app (se pierden a las 24 horas) y no se puede impulsar con un anuncio.</li>
             <li>
               No hay nada nuevo que configurar: usa los mismos permisos de publicar fotos (<code>pages_manage_posts</code> en Facebook e <code>instagram_content_publish</code> en Instagram) y la misma dirección pública del paso 6, porque Instagram descarga la foto desde internet.
+            </li>
+          </ul>
+        </Section>
+
+        <Section
+          id="video"
+          title="Reels y videos de Facebook e Instagram"
+          intro={
+            <>
+              Una publicación puede llevar <UI>un video</UI> en lugar de imágenes: sale como <UI>Reel</UI> en Instagram y en Facebook. También puede ser una <UI>historia con video</UI>. Se sube en el mismo borrador, junto a las imágenes, y sigue el mismo camino de revisión,
+              aprobación, fecha y publicación automática.
+            </>
+          }
+        >
+          <Callout tone="warning">
+            <p>
+              <UI>Importante:</UI> el video está probado con un Meta simulado, no con una cuenta real. Los límites de abajo salen de la documentación oficial de Meta (leída el 6 de noviembre de 2026) y Meta los cambia. La primera vez, publica un video corto en una cuenta de pruebas y mira
+              el resultado; si Meta rechaza algo, el mensaje trae su motivo exacto (ver «Mensajes frecuentes»).
+            </p>
+          </Callout>
+          <h3 className="pt-2 text-sm font-semibold">El archivo</h3>
+          <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed">
+            <li>
+              <UI>MP4 o MOV</UI> (el de un iPhone sirve) con video <UI>H.264 o HEVC</UI> y audio <UI>AAC</UI> (o sin audio), de hasta <UI>100 MB</UI>. Un solo video por publicación: no se mezcla con imágenes ni hace carrusel.
+            </li>
+            <li>
+              Lo ideal es <UI>vertical 9:16</UI> (1080 × 1920 píxeles) a 30 fotogramas por segundo. Otra proporción se publica, pero se ve con bandas o recortada: la app te avisa al subirlo.
+            </li>
+            <li>
+              La app lee el archivo por dentro (no por su nombre): si está cortado, dañado, fragmentado o con un códec que Meta no acepta, lo rechaza al subirlo y dice por qué. Si el índice del video estaba al final del archivo (pasa con muchos videos de teléfono) y Meta lo exige al principio, la app lo{" "}
+              <UI>reordena sola</UI> al subirlo.
+            </li>
+            <li>
+              Al subirlo, el navegador saca el <UI>primer cuadro como portada</UI> (Instagram la usa; sin ella elige un cuadro por su cuenta). Se ve en el reproductor del borrador.
+            </li>
+          </ul>
+          <h3 className="pt-2 text-sm font-semibold">Duración y tamaño que admite cada red</h3>
+          <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed">
+            <li>
+              <UI>Reel de Instagram:</UI> de 3 segundos a 15 minutos, 23 a 60 fotogramas por segundo, ancho de hasta 1920 píxeles y hasta 25 Mbps. <UI>Reel de Facebook:</UI> de 3 a 90 segundos, 24 a 60 fotogramas por segundo y al menos 540 × 960 píxeles (proporción entre 9:16 y 16:9).
+            </li>
+            <li>
+              <UI>Historia con video:</UI> de 3 a 60 segundos en las dos redes. Igual que las de foto, sale sin texto, sin enlace y sin stickers.
+            </li>
+            <li>Si eliges varios destinos, manda el más estricto: un Reel de 2 minutos solo cabe en Instagram, así que para Facebook hay que recortarlo.</li>
+            <li>
+              Facebook no publica más de 30 Reels cada 24 horas por esta vía, e Instagram limita las publicaciones por API (su documentación dice 50 en un lugar y 100 en otro).
+            </li>
+          </ul>
+          <h3 className="pt-2 text-sm font-semibold">Cómo se publica (por qué tarda)</h3>
+          <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed">
+            <li>
+              Meta tarda <UI>de segundos a varios minutos</UI> en procesar un video. La app no se queda esperando: sube el video (Facebook) o le da a Instagram la dirección desde donde bajarlo, y el proceso en segundo plano vuelve a consultar cada 30 segundos. Mientras tanto la publicación aparece
+              como «Publicando» y el destino dice «procesando el video en…». Los demás destinos y publicaciones siguen su curso.
+            </li>
+            <li>
+              Esto necesita el <UI>proceso en segundo plano encendido</UI> (<code>WORKER_ENABLED</code>, activo por defecto en un servidor que se queda encendido). Sin él el video se envía pero nadie confirma que ya salió.
+            </li>
+            <li>
+              Si Meta tarda más de <UI>45 minutos</UI>, el destino se marca fallido y la app no lo reintenta sola: revisa en la red social si ya salió antes de pulsar <UI>Reintentar</UI>, para no duplicarlo. Lo mismo si Meta no confirma el último paso (publicar): la app no lo repite a ciegas.
+            </li>
+            <li>
+              Instagram descarga el video desde internet, así que necesita la misma <UI>dirección pública con HTTPS</UI> del paso 6 (y el video tiene que seguir disponible mientras se procesa). Facebook recibe el archivo directamente.
+            </li>
+          </ul>
+          <h3 className="pt-2 text-sm font-semibold">Subir videos grandes</h3>
+          <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed">
+            <li>La barra de avance muestra la subida. Con una conexión lenta una subida muy larga puede cortarse (el servidor corta las peticiones de más de unos 5 minutos): exporta el video con menos calidad.</li>
+            <li>
+              Si ves «el servidor rechazó el tamaño del video» con un archivo de menos de 100 MB, el servidor web de tu hosting (el proxy de Easypanel, Nginx o Cloudflare) tiene un límite de subida propio más bajo: súbelo.
+            </li>
+            <li>
+              Los videos se guardan en disco, en la carpeta <code>MEDIA_DIR</code>, igual que las imágenes: debe estar en un volumen que sobreviva a los despliegues y entrar en tus copias de seguridad.
+            </li>
+          </ul>
+          <h3 className="pt-2 text-sm font-semibold">Después de publicar</h3>
+          <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed">
+            <li>
+              Los videos <UI>todavía no tienen estadísticas</UI> en esta app (las métricas de un Reel son otras y no están verificadas con una cuenta real) y <UI>no se pueden impulsar</UI> con un anuncio desde aquí (un anuncio con video necesita otra creatividad y aquí se gasta dinero real).
+              Mira sus cifras en Facebook e Instagram, o promociónalos desde Meta.
+            </li>
+            <li>
+              Los permisos son los mismos que para publicar fotos (<code>pages_manage_posts</code> e <code>instagram_content_publish</code>); no hay nada nuevo que configurar.
             </li>
           </ul>
         </Section>
@@ -599,12 +683,12 @@ export default async function ManualPage() {
                 <code>instagram_content_publish</code> (paso 3) y que al reconectar hayas marcado también la cuenta de Instagram.
               </p>
             </Problem>
-            <Problem message="«Instagram descarga la imagen desde internet y esta app no es accesible desde fuera (APP_URL es local o no usa HTTPS)»">
+            <Problem message="«Instagram descarga la imagen desde internet y esta app no es accesible desde fuera (APP_URL es local o no usa HTTPS)» (con un video dice «el video» en lugar de «la imagen»)">
               <p>
                 La app está en <code>localhost</code>. Facebook sí publica; para Instagram necesitas una dirección pública con HTTPS: tu servidor con dominio o un túnel temporal (paso 6).
               </p>
             </Problem>
-            <Problem message="«Instagram no pudo descargar la imagen desde tu servidor»">
+            <Problem message="«Instagram no pudo descargar la imagen desde tu servidor» (o «…el video desde tu servidor»)">
               <p>
                 Ya hay una dirección pública, pero Meta no llegó a ella: el túnel se cerró, la dirección de <code>MEDIA_PUBLIC_BASE_URL</code> es un ejemplo o está mal escrita, o no reiniciaste la app después de cambiarla. Abre esa dirección +{" "}
                 <code>/login</code> en el navegador: si no carga, ese es el problema. La app reintenta sola unas veces; después pulsa <UI>Publicar ahora</UI> o <UI>Reintentar</UI>.
@@ -632,6 +716,41 @@ export default async function ManualPage() {
                 Facebook recibió la foto pero no avisó si la historia quedó publicada, y la app no reintenta sola porque podría duplicarla. Abre la página de Facebook y mira sus historias: si ya está, no hay nada más que hacer; si no está, pulsa{" "}
                 <UI>Reintentar los que fallaron</UI>.
               </p>
+            </Problem>
+            <Problem message="«El video dura … y los Reels de … admiten hasta …» / «el mínimo es 3 segundos» / «Facebook pide al menos 540 × 960» / «entre las proporciones 9:16 y 16:9» / «Instagram admite … fotogramas por segundo» / «un ancho de hasta 1920» / «hasta 25 Mbps»">
+              <p>
+                El video no cumple lo que admite alguna de las redes elegidas (límites en la sección «Reels y videos»). Con varios destinos manda el más estricto: un Reel de más de 90 segundos solo cabe en Instagram, así que o lo recortas o quitas Facebook de los destinos. Para cambiar el video usa{" "}
+                <UI>Quitar</UI>, expórtalo de nuevo (resolución, fotogramas o bitrate más bajos) y súbelo otra vez.
+              </p>
+            </Problem>
+            <Problem message="«El video usa el códec … » / «El audio del video es … y Meta solo acepta AAC» / «El video está fragmentado» / «El video está incompleto» / «No se pudo leer el video»">
+              <p>
+                La app revisó el archivo por dentro y no sirve tal cual. Expórtalo de nuevo como <UI>MP4 con video H.264 (o HEVC) y audio AAC</UI> (en HandBrake, CapCut o Canva basta con descargarlo como MP4). «Incompleto» casi siempre es una subida que se cortó: vuelve a subirlo.
+              </p>
+            </Problem>
+            <Problem message="«Instagram no acepta el formato de este video» / «Instagram rechazó el video: …» / «Facebook rechazó el video: …»">
+              <p>
+                Meta recibió el video, lo revisó y no lo aceptó. Si el mensaje trae un motivo (por ejemplo «Resolution too low» o «su duración no es válida»), ahí está lo que corregir. Usa <UI>Volver a borrador</UI>, cambia el video (MP4 con H.264 y AAC, vertical 9:16, mínimo 540 × 960) y envíalo a revisión de nuevo.
+              </p>
+            </Problem>
+            <Problem message="«No se pudo confirmar si Instagram publicó el video» / «…si Facebook recibió el video» / «Facebook no confirmó que recibió el video» / «lleva más de 45 minutos procesando el video»">
+              <p>
+                La app no sabe si el video llegó a salir y <UI>no lo reintenta sola</UI> porque podría duplicarse. Abre Instagram o Facebook y busca el Reel: si ya está, no hay nada más que hacer; si no está, pulsa <UI>Reintentar los que fallaron</UI> (empieza de cero, con otra subida).
+              </p>
+            </Problem>
+            <Problem message="«No se encontró el archivo del video en este servidor»">
+              <p>
+                La base de datos conoce el video pero su archivo no está en la carpeta <code>MEDIA_DIR</code> de este servidor (un redespliegue sin volumen, o la publicación se creó en otra copia de la app). Crea una publicación nueva y sube el video de nuevo; revisa que <code>MEDIA_DIR</code> esté en un volumen que sobreviva a
+                los despliegues.
+              </p>
+            </Problem>
+            <Problem message="«el servidor rechazó el tamaño del video» / «se cortó la conexión mientras se subía» / «la subida tardó demasiado»">
+              <p>
+                El video no llegó entero. Si pesa menos de 100 MB, el servidor web de tu hosting limita las subidas (súbele el límite en Easypanel, Nginx o Cloudflare); si la conexión es lenta, exporta el video con menos calidad para que pese menos.
+              </p>
+            </Problem>
+            <Problem message="«Los videos (Reels) todavía no se pueden promocionar desde la app»">
+              <p>Un anuncio con video necesita otro tipo de creatividad que aún no está probada con dinero real. Promociona el Reel desde Meta, o impulsa una publicación con imagen.</p>
             </Problem>
             <Problem message="«La conexión con Meta venció o fue revocada»">
               <p>

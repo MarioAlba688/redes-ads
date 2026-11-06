@@ -147,3 +147,53 @@ describe("validatePostForReview: historias", () => {
     expect(validatePostForReview({ ...story, targets: [], media: [vertical] })).toEqual([expect.stringMatching(/Elige al menos un destino/)]);
   });
 });
+
+describe("validatePostForReview con video", () => {
+  const details = {
+    container: "mp4",
+    brand: "isom",
+    videoCodec: "avc1",
+    fps: 30,
+    rotation: 0,
+    bitrate: 8_000_000,
+    fastStart: true,
+    audio: { codec: "mp4a", channels: 2, sampleRate: 48000 },
+  };
+  const video = { kind: "VIDEO" as const, mimeType: "video/mp4", width: 1080, height: 1920, size: 20_000_000, durationMs: 30_000, videoInfo: details };
+
+  it("un Reel vertical de 30 s esta listo para Instagram y Facebook, sin pedir imagenes", () => {
+    expect(validatePostForReview({ ...base, targets: [fb, ig], media: [video] })).toEqual([]);
+  });
+
+  it("una historia con video no pide texto", () => {
+    expect(validatePostForReview({ ...base, text: "", format: "STORY", targets: [fb, ig], media: [{ ...video, durationMs: 45_000 }] })).toEqual([]);
+  });
+
+  it("el texto de un Reel sigue pidiendose y respeta el limite de la red", () => {
+    expect(validatePostForReview({ ...base, text: "", targets: [ig], media: [video] })).toEqual(["Escribe el texto de la publicación."]);
+    expect(validatePostForReview({ ...base, text: "a".repeat(2300), targets: [ig], media: [video] })).toEqual([expect.stringMatching(/2\.?200/)]);
+  });
+
+  it("un video no se mezcla con imagenes ni con otro video", () => {
+    expect(validatePostForReview({ ...base, targets: [fb], media: [video, jpg] })).toEqual([expect.stringMatching(/solo el video, sin imágenes/)]);
+    expect(validatePostForReview({ ...base, targets: [fb], media: [video, video] })).toEqual([expect.stringMatching(/un solo video y esta tiene 2/)]);
+    expect(validatePostForReview({ ...base, format: "STORY", targets: [fb], media: [video, jpg] })).toEqual([expect.stringMatching(/^Una historia con video lleva solo el video/)]);
+  });
+
+  it("aplica los limites de duracion de cada destino", () => {
+    const long = { ...video, durationMs: 100_000 };
+    expect(validatePostForReview({ ...base, targets: [ig], media: [long] })).toEqual([]);
+    expect(validatePostForReview({ ...base, targets: [fb], media: [long] })).toEqual([expect.stringMatching(/Facebook admiten hasta 90 segundos/)]);
+    expect(validatePostForReview({ ...base, format: "STORY", targets: [ig], media: [{ ...video, durationMs: 75_000 }] })).toEqual([expect.stringMatching(/historias de Instagram admiten hasta 1 minuto/)]);
+  });
+
+  it("sin lo leido del archivo (filas antiguas) no se cae: revisa lo basico", () => {
+    expect(validatePostForReview({ ...base, targets: [ig], media: [{ ...video, videoInfo: null }] })).toEqual([]);
+    expect(validatePostForReview({ ...base, targets: [fb], media: [{ ...video, videoInfo: null, durationMs: null }] })).toEqual([]);
+  });
+
+  it("las imagenes de una publicacion sin video siguen como antes (kind IMAGE o ausente)", () => {
+    expect(validatePostForReview({ ...base, targets: [ig], media: [{ ...jpg, kind: "IMAGE" }] })).toEqual([]);
+    expect(validatePostForReview({ ...base, targets: [ig], media: [{ ...jpg, kind: "IMAGE", mimeType: "image/png" }] })).toEqual([expect.stringMatching(/solo acepta imágenes JPG/)]);
+  });
+});

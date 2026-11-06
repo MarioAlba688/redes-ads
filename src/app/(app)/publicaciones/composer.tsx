@@ -34,8 +34,8 @@ export type ComposerProps = {
 };
 
 const FORMAT_HINTS: Record<PostFormatName, string> = {
-  FEED: "Texto con una o varias imágenes (en Instagram, un carrusel).",
-  STORY: "Una sola foto que dura 24 horas, sin texto.",
+  FEED: "Texto con una o varias imágenes (en Instagram, un carrusel) o con un video (un Reel).",
+  STORY: "Una sola foto o un video de hasta 60 segundos que dura 24 horas, sin texto.",
 };
 
 /** Plataforma que conviene pedirle a la IA segun donde se va a publicar. */
@@ -136,9 +136,9 @@ export function Composer({ brand, targets, post, initialFormat, media = [], ai }
             <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm leading-relaxed">
               <p className="font-medium">Cómo salen las historias</p>
               <ul className="mt-1 list-disc space-y-0.5 pl-5 text-muted">
-                <li>Una sola foto, mejor en vertical 9:16 (por ejemplo 1080 × 1920 píxeles).</li>
+                <li>Una sola foto o un solo video (de 3 a 60 segundos), mejor en vertical 9:16 (por ejemplo 1080 × 1920 píxeles).</li>
                 <li>
-                  Meta no deja publicar por la API el texto, el enlace ni los stickers de una historia: lo que quieras que se vea tiene que ir dentro de la imagen.
+                  Meta no deja publicar por la API el texto, el enlace ni los stickers de una historia: lo que quieras que se vea tiene que ir dentro de la imagen o del video.
                 </li>
                 <li>Dura 24 horas y no tiene estadísticas en esta app.</li>
               </ul>
@@ -223,8 +223,8 @@ export function Composer({ brand, targets, post, initialFormat, media = [], ai }
           <MediaUploader postId={post.id} media={media} format={post.format} />
         ) : (
           <div>
-            <h2 className="font-semibold">{story ? "Foto de la historia" : "Imagen"}</h2>
-            <p className="text-sm text-muted">Guarda el borrador primero y entonces podrás añadir {story ? "la foto" : "una imagen"}.</p>
+            <h2 className="font-semibold">{story ? "Foto o video de la historia" : "Imágenes o video"}</h2>
+            <p className="text-sm text-muted">Guarda el borrador primero y entonces podrás añadir {story ? "la foto o el video" : "imágenes o un video"}.</p>
           </div>
         )}
       </Card>

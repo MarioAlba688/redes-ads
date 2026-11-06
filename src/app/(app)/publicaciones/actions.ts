@@ -207,16 +207,17 @@ export async function removeMedia(_prev: FormState, formData: FormData): Promise
 
   const media = await db.postMedia.findUnique({
     where: { id: id.data },
-    select: { storageKey: true, postId: true, post: { select: { status: true } } },
+    select: { kind: true, storageKey: true, thumbKey: true, postId: true, post: { select: { status: true } } },
   });
-  if (!media) return { error: "Esa imagen ya no existe." };
-  if (media.post.status !== "DRAFT") return { error: "Solo se pueden cambiar las imágenes de un borrador." };
+  if (!media) return { error: "Ese archivo ya no existe." };
+  if (media.post.status !== "DRAFT") return { error: "Solo se pueden cambiar las imágenes y el video de un borrador." };
 
   await db.postMedia.delete({ where: { id: id.data } });
   await deleteImage(media.storageKey);
+  if (media.thumbKey) await deleteImage(media.thumbKey); // la portada de un video
   await audit("post.media_removed", { userId: auth.user.id, target: media.postId });
   revalidatePath(`/publicaciones/${media.postId}`);
-  return { success: "Imagen quitada." };
+  return { success: media.kind === "VIDEO" ? "Video quitado." : "Imagen quitada." };
 }
 
 /** Cambia el orden de las imagenes de un borrador: mueve una antes o despues de su vecina. La primera es la portada. */
@@ -262,7 +263,7 @@ export async function deleteDraft(_prev: FormState, formData: FormData): Promise
 
   const post = await db.post.findUnique({
     where: { id: id.data },
-    select: { status: true, media: { select: { storageKey: true } }, targets: { select: { status: true } } },
+    select: { status: true, media: { select: { storageKey: true, thumbKey: true } }, targets: { select: { status: true } } },
   });
   if (!post) return { error: "Esa publicación ya no existe." };
   if (post.status !== "DRAFT" && post.status !== "CANCELLED" && post.status !== "FAILED") {
@@ -272,7 +273,11 @@ export async function deleteDraft(_prev: FormState, formData: FormData): Promise
   if (post.targets.some((t) => t.status === "PUBLISHED")) return { error: "Esta publicación ya salió en una red social, así que no se puede borrar de aquí." };
 
   await db.post.delete({ where: { id: id.data } }); // sus destinos y sus imagenes (filas) se borran en cascada
-  for (const m of post.media) await deleteImage(m.storageKey); // y los archivos, que no los borra la base de datos
+  for (const m of post.media) {
+    // y los archivos (y la portada de un video), que no los borra la base de datos
+    await deleteImage(m.storageKey);
+    if (m.thumbKey) await deleteImage(m.thumbKey);
+  }
   await audit("post.deleted", { userId: auth.user.id, target: id.data });
   revalidatePath("/publicaciones");
   redirect("/publicaciones");

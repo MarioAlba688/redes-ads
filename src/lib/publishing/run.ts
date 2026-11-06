@@ -3,7 +3,7 @@ import { audit } from "@/lib/audit";
 import { decryptSecret } from "@/lib/crypto";
 import { db } from "@/lib/db";
 import { describeInternalError } from "@/lib/errors";
-import { MISSING_IMAGE_MESSAGE, readImage } from "@/lib/media";
+import { imageExists, MISSING_IMAGE_MESSAGE, MISSING_VIDEO_MESSAGE, readImage } from "@/lib/media";
 import { MetaApiError } from "@/lib/meta/errors";
 import {
   backoffMinutes,
@@ -17,21 +17,24 @@ import {
   publishToInstagram,
   type PublishImage,
   type PublishResult,
+  type PublishVideo,
 } from "@/lib/meta/publish";
 import { missingPublishScope, missingScopeMessage } from "@/lib/meta/scopes";
 import { derivePostStatus, isTerminal } from "@/lib/publishing/status";
+import { advanceVideoPublication } from "@/lib/publishing/video";
 
 /** Un destino que lleva "publicandose" mas tiempo que esto se da por interrumpido (el proceso se cayo). */
 const STALE_LOCK_MS = 10 * 60_000;
 /** Cuantos destinos se procesan como maximo en cada vuelta. */
 const BATCH = 20;
 
-export type RunSummary = { published: number; failed: number; retrying: number; recovered: number };
+/** `waiting`: videos que la red social sigue procesando (se vuelven a consultar en la vuelta siguiente). */
+export type RunSummary = { published: number; failed: number; retrying: number; recovered: number; waiting: number };
 
 /** Recalcula el estado de la publicacion segun sus destinos y lo guarda (sin pisar una cancelacion). */
 export async function refreshPostStatus(postId: string, now = new Date()): Promise<void> {
-  const targets = await db.postTarget.findMany({ where: { postId }, select: { status: true } });
-  const next = derivePostStatus(targets);
+  const targets = await db.postTarget.findMany({ where: { postId }, select: { status: true, remoteId: true } });
+  const next = derivePostStatus(targets.map((t) => ({ status: t.status, waiting: t.remoteId !== null })));
   const result = await db.post.updateMany({
     where: { id: postId, status: { in: ["SCHEDULED", "PUBLISHING"] } },
     data: { status: next, ...(isTerminal(next) ? { publishedAt: next === "FAILED" ? null : now } : {}) },
@@ -65,7 +68,7 @@ async function recoverStale(now: Date): Promise<number> {
   return recovered;
 }
 
-type Outcome = "published" | "failed" | "retrying";
+type Outcome = "published" | "failed" | "retrying" | "waiting";
 
 /** Publica un destino que ya esta reservado (PUBLISHING) y deja su resultado guardado. */
 async function publishOne(targetId: string, now: Date): Promise<Outcome> {
@@ -104,31 +107,81 @@ async function publishOne(targetId: string, now: Date): Promise<Outcome> {
   const missing = missingPublishScope(target.account.kind, target.account.scopes);
   if (missing) return fail(missingScopeMessage(target.account.name, missing));
 
+  const videoMedia = target.post.media.find((m) => m.kind === "VIDEO");
   try {
     const token = decryptSecret(target.account.accessTokenEnc);
-    const images: PublishImage[] = [];
-    for (const [i, media] of target.post.media.entries()) {
-      const bytes = await readImage(media.storageKey);
-      if (!bytes) throw new PublishError(target.post.media.length > 1 ? `La imagen ${i + 1}: ${MISSING_IMAGE_MESSAGE}` : MISSING_IMAGE_MESSAGE, false);
-      images.push({
-        bytes,
-        mimeType: media.mimeType,
-        filename: `imagen-${i + 1}.${media.mimeType === "image/png" ? "png" : "jpg"}`,
-        // Solo Instagram la descarga por URL; Facebook recibe el archivo directamente.
-        publicUrl: target.account.kind === "INSTAGRAM_PROFILE" ? publicMediaUrl(media.storageKey) : "",
-      });
-    }
-
     const account = { externalId: target.account.externalId, token };
     const instagram = target.account.kind === "INSTAGRAM_PROFILE";
     let result: PublishResult;
-    if (target.post.format === "STORY") {
-      // Una historia es una sola foto y sale sin texto ni enlace (el "texto" de la publicacion es solo una nota interna).
-      if (images.length !== 1) throw new PublishError("Una historia lleva una sola foto y esta no tiene exactamente una.", false);
-      result = instagram ? await publishStoryToInstagram(account, images[0]) : await publishStoryToFacebookPage(account, images[0]);
+
+    if (videoMedia) {
+      // Un video se publica por fases (lib/publishing/video.ts): esta vuelta da UN paso y, si la red lo sigue procesando,
+      // el destino vuelve a quedar pendiente con su id guardado y se consulta de nuevo mas tarde, sin bloquear a los demas.
+      if (target.post.media.length !== 1) throw new PublishError("Una publicación con video lleva solo el video y esta tiene más archivos.", false);
+      if (!(await imageExists(videoMedia.storageKey))) throw new PublishError(MISSING_VIDEO_MESSAGE, false);
+      const cover = instagram && videoMedia.thumbKey && (await imageExists(videoMedia.thumbKey)) ? publicMediaUrl(videoMedia.thumbKey, "la portada") : null;
+      const video: PublishVideo = {
+        size: videoMedia.size,
+        mimeType: videoMedia.mimeType,
+        // Solo Instagram lo descarga por URL; Facebook recibe el archivo directamente.
+        publicUrl: instagram ? publicMediaUrl(videoMedia.storageKey, "el video") : "",
+        coverUrl: cover,
+        read: async () => {
+          const bytes = await readImage(videoMedia.storageKey);
+          if (!bytes) throw new PublishError(MISSING_VIDEO_MESSAGE, false);
+          return bytes;
+        },
+      };
+      const step = await advanceVideoPublication({
+        instagram,
+        story: target.post.format === "STORY",
+        account,
+        text: target.post.text,
+        linkUrl: target.post.linkUrl,
+        video,
+        remoteId: target.remoteId,
+        remoteStartedAt: target.remoteStartedAt,
+        now,
+      });
+      if (step.kind === "failed") return fail(step.message, { retry: step.retryable });
+      if (step.kind === "waiting") {
+        // No cuenta como intento: la red social esta trabajando. `remoteId` es lo que distingue "procesando" de "pendiente".
+        await db.postTarget.update({
+          where: { id: targetId },
+          data: {
+            status: "PENDING",
+            remoteId: step.remoteId.slice(0, 191),
+            remoteStartedAt: target.remoteStartedAt ?? now,
+            lockedAt: null,
+            nextAttemptAt: new Date(now.getTime() + step.delaySeconds * 1000),
+            error: null,
+          },
+        });
+        return "waiting";
+      }
+      result = step.result;
     } else {
-      const input = { text: target.post.text, linkUrl: target.post.linkUrl, images };
-      result = instagram ? await publishToInstagram(account, input) : await publishToFacebookPage(account, input);
+      const images: PublishImage[] = [];
+      for (const [i, media] of target.post.media.entries()) {
+        const bytes = await readImage(media.storageKey);
+        if (!bytes) throw new PublishError(target.post.media.length > 1 ? `La imagen ${i + 1}: ${MISSING_IMAGE_MESSAGE}` : MISSING_IMAGE_MESSAGE, false);
+        images.push({
+          bytes,
+          mimeType: media.mimeType,
+          filename: `imagen-${i + 1}.${media.mimeType === "image/png" ? "png" : "jpg"}`,
+          // Solo Instagram la descarga por URL; Facebook recibe el archivo directamente.
+          publicUrl: instagram ? publicMediaUrl(media.storageKey) : "",
+        });
+      }
+
+      if (target.post.format === "STORY") {
+        // Una historia es una sola foto y sale sin texto ni enlace (el "texto" de la publicacion es solo una nota interna).
+        if (images.length !== 1) throw new PublishError("Una historia lleva una sola foto y esta no tiene exactamente una.", false);
+        result = instagram ? await publishStoryToInstagram(account, images[0]) : await publishStoryToFacebookPage(account, images[0]);
+      } else {
+        const input = { text: target.post.text, linkUrl: target.post.linkUrl, images };
+        result = instagram ? await publishToInstagram(account, input) : await publishToFacebookPage(account, input);
+      }
     }
 
     await db.postTarget.update({
@@ -150,7 +203,7 @@ async function publishOne(targetId: string, now: Date): Promise<Outcome> {
     if (!(e instanceof PublishError) && !(e instanceof MetaApiError)) {
       console.error("[publicar] error interno", target.account.id, describeInternalError(e));
     }
-    const c = classifyPublishError(e);
+    const c = classifyPublishError(e, { video: videoMedia !== undefined });
     if (c.expired) {
       await db.socialAccount.updateMany({
         where: { id: target.account.id, status: "ACTIVE" },
@@ -167,7 +220,7 @@ async function publishOne(targetId: string, now: Date): Promise<Outcome> {
  * procesos a la vez ninguno publica el mismo dos veces. Nunca lanza.
  */
 export async function runDuePublications(now = new Date()): Promise<RunSummary> {
-  const summary: RunSummary = { published: 0, failed: 0, retrying: 0, recovered: 0 };
+  const summary: RunSummary = { published: 0, failed: 0, retrying: 0, recovered: 0, waiting: 0 };
   try {
     summary.recovered = await recoverStale(now);
 
@@ -194,6 +247,7 @@ export async function runDuePublications(now = new Date()): Promise<RunSummary> 
       await refreshPostStatus(t.postId, now);
       if (outcome === "published") summary.published++;
       else if (outcome === "retrying") summary.retrying++;
+      else if (outcome === "waiting") summary.waiting++;
       else summary.failed++;
     }
   } catch (e) {

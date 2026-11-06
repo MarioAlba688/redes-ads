@@ -80,13 +80,15 @@ export async function refreshTargetMetrics(targetId: string, now = new Date()): 
         externalId: true,
         publishedAt: true,
         metrics: true,
-        post: { select: { format: true } },
+        post: { select: { format: true, media: { where: { kind: "VIDEO" }, select: { id: true }, take: 1 } } },
         account: { select: { id: true, name: true, kind: true, externalId: true, status: true, accessTokenEnc: true, scopes: true } },
       },
     });
     if (!target || target.status !== "PUBLISHED" || !target.externalId) return { outcome: "skipped" };
     // Una historia dura 24 horas: no se leen sus estadisticas (y su id no es el de una publicacion normal).
     if (target.post.format === "STORY") return { outcome: "skipped" };
+    // Un video (Reel) tiene otras metricas y otro id: todavia no se leen (no estan verificadas con una cuenta real).
+    if (target.post.media.length > 0) return { outcome: "skipped" };
     const account = target.account;
     if (account.kind !== "FACEBOOK_PAGE" && account.kind !== "INSTAGRAM_PROFILE") return { outcome: "skipped" };
     if (account.status !== "ACTIVE" || !account.accessTokenEnc) {
@@ -153,7 +155,7 @@ export async function refreshDueMetrics(now = new Date(), opts: { limit?: number
         status: "PUBLISHED",
         externalId: { not: null },
         publishedAt: { gte: new Date(now.getTime() - STATS_MAX_AGE_DAYS * DAY_MS) },
-        post: { format: "FEED" },
+        post: { format: "FEED", media: { none: { kind: "VIDEO" } } },
         account: { platform: "META", status: "ACTIVE", accessTokenEnc: { not: null }, kind: { in: ["FACEBOOK_PAGE", "INSTAGRAM_PROFILE"] } },
         OR: [{ metrics: { is: null } }, { metrics: { is: { nextFetchAt: { lte: now } } } }],
       },
