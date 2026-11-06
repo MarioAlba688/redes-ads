@@ -3,11 +3,11 @@ import { readFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { MetaApiError } from "@/lib/meta/errors";
 import { classifyPublishError, PublishError, type PublishVideo } from "@/lib/meta/publish";
 import { advanceVideoPublication, type AdvanceInput, type VideoStep } from "@/lib/publishing/video";
-import { PAGE_TOKEN, startFakeMeta } from "../e2e/fake-meta.mjs";
 import { setMetaEnv } from "./helpers/meta-env";
 
 // Las fases de publicacion de un video contra el Meta SIMULADO de las pruebas e2e (e2e/fake-meta.mjs), con videos
@@ -19,7 +19,21 @@ const GOOD = fixture("video-vertical.mp4");
 const MOOV_LAST = fixture("video-moov-al-final.mp4");
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
-type Fake = Awaited<ReturnType<typeof startFakeMeta>>;
+// El simulador es JavaScript de las pruebas e2e. Esa carpeta NO entra en la imagen de Docker (.dockerignore) y `next build`
+// revisa los tipos de estas pruebas, asi que no se importa de forma estatica (el build no encontraria el archivo): se carga
+// al empezar, con una ruta calculada, y se describe aqui lo poco que se usa de el.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type Fake = {
+  close(): Promise<void>;
+  setScenario(scenario: Record<string, unknown>): void;
+  reset(): void;
+  published(): any[];
+  uploads(): any[];
+  requests(): any[];
+};
+/* eslint-enable @typescript-eslint/no-explicit-any */
+let startFakeMeta: (port: number, expectedRedirectUri: string) => Promise<Fake>;
+let PAGE_TOKEN: string;
 let fake: Fake;
 let media: http.Server;
 let mediaBase: string;
@@ -33,6 +47,8 @@ const freePort = () =>
   });
 
 beforeAll(async () => {
+  const fakeMetaUrl = pathToFileURL(path.resolve(import.meta.dirname, "../e2e/fake-meta.mjs")).href;
+  ({ startFakeMeta, PAGE_TOKEN } = (await import(/* @vite-ignore */ fakeMetaUrl)) as { startFakeMeta: typeof startFakeMeta; PAGE_TOKEN: string });
   const metaPort = await freePort();
   setMetaEnv({ META_API_BASE_URL: `http://127.0.0.1:${metaPort}` });
   fake = await startFakeMeta(metaPort, "http://127.0.0.1/callback");
