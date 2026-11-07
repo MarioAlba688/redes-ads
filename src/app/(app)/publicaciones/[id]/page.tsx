@@ -20,6 +20,7 @@ import {
   type PostFormatName,
   type PostStatusName,
 } from "@/lib/posts";
+import { FACEBOOK_REEL_NOTICE, isMeasurable } from "@/lib/stats/measurable";
 import { interactions } from "@/lib/stats/metrics";
 import { formatLocalInput } from "@/lib/time";
 import { Composer, DeleteDraftForm } from "../composer";
@@ -311,10 +312,10 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
                   {t.status === "PUBLISHED" && story && (
                     <span className="basis-full text-xs text-muted">Las historias duran 24 horas: no tienen estadísticas ni se pueden impulsar con un anuncio.</span>
                   )}
-                  {t.status === "PUBLISHED" && !story && video && (
-                    <span className="basis-full text-xs text-muted">Los videos todavía no tienen estadísticas en esta app ni se pueden impulsar con un anuncio desde aquí.</span>
+                  {t.status === "PUBLISHED" && !story && !isMeasurable({ accountKind: t.account.kind, isVideo: !!video }) && (
+                    <span className="basis-full text-xs text-muted">{FACEBOOK_REEL_NOTICE} Tampoco se puede impulsar con un anuncio desde aquí.</span>
                   )}
-                  {t.status === "PUBLISHED" && !story && !video && (
+                  {t.status === "PUBLISHED" && !story && isMeasurable({ accountKind: t.account.kind, isVideo: !!video }) && (
                     <span className="basis-full text-xs text-muted">
                       {t.metrics && interactions(t.metrics) !== null ? (
                         <>
@@ -333,13 +334,18 @@ export default async function PostPage({ params, searchParams }: PageProps<"/pub
                       <Link href="/estadisticas" className="text-primary hover:underline">
                         Ver estadísticas
                       </Link>
-                      {can(user.role, "ads.create") && (
-                        <>
-                          {" · "}
-                          <Link href={`/anuncios/nuevo?tipo=impulsar&destino=${t.id}`} className="text-primary hover:underline">
-                            Impulsar con un anuncio
-                          </Link>
-                        </>
+                      {video ? (
+                        // Un anuncio con video necesita otra creatividad y aqui se gasta dinero real: no se ofrece.
+                        " · No se puede impulsar con un anuncio desde aquí"
+                      ) : (
+                        can(user.role, "ads.create") && (
+                          <>
+                            {" · "}
+                            <Link href={`/anuncios/nuevo?tipo=impulsar&destino=${t.id}`} className="text-primary hover:underline">
+                              Impulsar con un anuncio
+                            </Link>
+                          </>
+                        )
                       )}
                     </span>
                   )}

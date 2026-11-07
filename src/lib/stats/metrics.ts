@@ -94,8 +94,10 @@ export function retryAfterFailure(kind: FailureKind, now: Date): Date {
 export type Summary = {
   /** Publicaciones con cifras leidas. */
   measured: number;
-  /** Publicaciones que aun no se leyeron. */
+  /** Publicaciones que aun no se leyeron (y que se pueden leer). */
   pending: number;
+  /** Publicaciones sin cifras cuyas estadisticas todavia no se leen (los Reels de Facebook). */
+  unavailable: number;
   views: number | null;
   reach: number | null;
   /** Alcance medio por publicacion (el alcance de varias no se puede sumar: una persona puede verlas todas). */
@@ -114,9 +116,13 @@ function sumKnown(values: (number | null)[]): number | null {
   return known.length ? known.reduce((a, b) => a + b, 0) : null;
 }
 
-/** Totales de un grupo de publicaciones. Las cifras que ninguna trae quedan en null (no en 0). */
-export function summarize(rows: { metrics: PostMetrics | null }[]): Summary {
+/**
+ * Totales de un grupo de publicaciones. Las cifras que ninguna trae quedan en null (no en 0). Una publicacion con
+ * `measurable: false` y sin cifras no es «por leer» (no se va a leer): se cuenta aparte, en `unavailable`.
+ */
+export function summarize(rows: { metrics: PostMetrics | null; measurable?: boolean }[]): Summary {
   const measuredRows = rows.flatMap((r) => (r.metrics ? [r.metrics] : []));
+  const unavailable = rows.filter((r) => !r.metrics && r.measurable === false).length;
   const reaches = measuredRows.map((m) => m.reach);
   const reach = sumKnown(reaches);
   const knownReaches = reaches.filter((v): v is number => v !== null);
@@ -128,7 +134,8 @@ export function summarize(rows: { metrics: PostMetrics | null }[]): Summary {
 
   return {
     measured: measuredRows.length,
-    pending: rows.length - measuredRows.length,
+    pending: rows.length - measuredRows.length - unavailable,
+    unavailable,
     views: sumKnown(measuredRows.map((m) => m.views)),
     reach,
     avgReach: reach !== null && knownReaches.length ? reach / knownReaches.length : null,

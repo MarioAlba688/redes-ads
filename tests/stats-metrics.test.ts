@@ -146,7 +146,27 @@ describe("summarize", () => {
   });
 
   it("sin publicaciones no inventa nada", () => {
-    expect(summarize([])).toMatchObject({ measured: 0, pending: 0, views: null, interactions: null, rate: null });
+    expect(summarize([])).toMatchObject({ measured: 0, pending: 0, unavailable: 0, views: null, interactions: null, rate: null });
+  });
+
+  it("lo que todavia no se puede leer (un Reel de Facebook) no cuenta como «por leer», sino aparte", () => {
+    const s = summarize([
+      { metrics: m({ views: 10, reach: 5, likes: 1 }), measurable: true },
+      { metrics: null, measurable: true }, // se leera pronto
+      { metrics: null, measurable: false }, // Reel de Facebook: no se va a leer
+      { metrics: null }, // sin dato de si se puede leer: se espera que si
+    ]);
+    expect(s).toMatchObject({ measured: 1, pending: 2, unavailable: 1 });
+  });
+
+  it("lo que no se puede leer no cambia ninguna cifra ni el alcance medio", () => {
+    const base = summarize(rows);
+    expect(summarize([...rows, { metrics: null, measurable: false }, { metrics: null, measurable: false }])).toEqual({ ...base, unavailable: 2 });
+  });
+
+  it("si ya tiene cifras cuenta como medida, aunque se marque como no medible", () => {
+    const s = summarize([{ metrics: m({ views: 7, reach: 7, likes: 1 }), measurable: false }]);
+    expect(s).toMatchObject({ measured: 1, pending: 0, unavailable: 0, views: 7 });
   });
 });
 

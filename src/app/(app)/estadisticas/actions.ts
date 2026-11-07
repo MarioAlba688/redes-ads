@@ -24,8 +24,9 @@ export async function refreshStatsAction(_prev: FormState, formData: FormData): 
     { dias: text(formData.get("dias")), marca: text(formData.get("marca")), red: text(formData.get("red")) },
     brands.map((b) => b.id),
   );
-  const rows = await loadStatRows(filters, new Date(), MANUAL_LIMIT);
-  if (rows.length === 0) return { error: "No hay publicaciones para actualizar con estos filtros." };
+  // Solo las que se pueden leer: si no, los Reels de Facebook ocuparian lugares de las 12 y no se leeria nada de ellos.
+  const rows = await loadStatRows(filters, new Date(), MANUAL_LIMIT, { measurableOnly: true });
+  if (rows.length === 0) return { error: "No hay publicaciones que se puedan actualizar con estos filtros (los Reels de Facebook todavía no tienen estadísticas)." };
 
   const result = await refreshTargetsNow(rows.map((r) => r.targetId));
   await audit("stats.refreshed", {

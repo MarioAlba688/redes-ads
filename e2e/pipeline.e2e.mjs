@@ -855,13 +855,20 @@ try {
     JSON.stringify(reelTargets.map((t) => t.externalUrl)),
   );
   await admin.goto(`${APP}/publicaciones/${reel.id}`);
-  check("la ficha del Reel publicado dice que los videos no tienen estadísticas ni impulso, y no ofrece impulsarlo", (await admin.getByText(/Los videos todavía no tienen estadísticas/).count()) === 2 && (await admin.getByRole("link", { name: "Impulsar con un anuncio" }).count()) === 0);
+  check(
+    "la ficha del Reel publicado avisa que el de Facebook no tiene estadísticas, ofrece las del de Instagram y no ofrece impulsar ninguno",
+    (await admin.getByText(/Los Reels de Facebook todavía no tienen estadísticas/).count()) === 1 &&
+      (await admin.getByRole("link", { name: "Ver estadísticas" }).count()) === 1 &&
+      (await admin.getByRole("link", { name: "Impulsar con un anuncio" }).count()) === 0,
+  );
   await shot(admin, "video-publicado.png");
   await sleep(3500);
-  await admin.goto(`${APP}/estadisticas`);
+  await admin.goto(`${APP}/estadisticas?orden=recientes`);
+  const reelMetrics = await db.sql("SELECT t.accountId, COUNT(m.id) c FROM PostTarget t LEFT JOIN PostTargetMetrics m ON m.targetId = t.id WHERE t.postId=? GROUP BY t.accountId", [reel.id]);
   check(
-    "el worker no lee estadísticas del Reel, y la pantalla Estadísticas no lo lista",
-    Number((await db.sql("SELECT COUNT(*) c FROM PostTargetMetrics WHERE targetId IN (SELECT id FROM PostTarget WHERE postId=?)", [reel.id]))[0].c) === 0 && !(await admin.content()).includes(reel.text),
+    "el worker no lee estadísticas del Reel de Facebook, y la pantalla Estadísticas lo lista con su aviso",
+    Number(reelMetrics.find((r) => r.accountId === "acc-fb-reservi")?.c ?? -1) === 0 && (await admin.content()).includes(reel.text) && (await admin.getByText(/Los Reels de Facebook todavía no tienen estadísticas/).count()) >= 1,
+    JSON.stringify(reelMetrics),
   );
   const boostTry = await db.sql("SELECT COUNT(*) c FROM AdPromotion WHERE postId=?", [reel.id]);
   check("y no hay anuncios creados a partir de un video", Number(boostTry[0].c) === 0);

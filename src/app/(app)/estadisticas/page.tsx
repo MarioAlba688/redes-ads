@@ -9,6 +9,7 @@ import { formatCompact, formatInt, formatPercent } from "@/lib/format";
 import { missingStatsScopes } from "@/lib/meta/scopes";
 import { can } from "@/lib/permissions";
 import { NETWORK_LABELS, NETWORK_PARAM, parseStatsFilters, STATS_KINDS, statsHref, type StatsKind } from "@/lib/stats/filters";
+import { FACEBOOK_REEL_NOTICE } from "@/lib/stats/measurable";
 import { engagementRate, interactions, isSortKey, SORT_KEYS, SORT_LABELS, sortRows, summarize, type PostMetrics, type Summary } from "@/lib/stats/metrics";
 import { loadStatRows, STATS_ROW_LIMIT, type StatRow } from "@/lib/stats/query";
 import { RefreshStatsButton } from "./refresh-button";
@@ -158,7 +159,7 @@ export default async function StatsPage({ searchParams }: PageProps<"/estadistic
         </Card>
       ) : (
         <>
-          {summary.measured === 0 && (
+          {summary.measured === 0 && summary.pending > 0 && (
             <div className="mb-4">
               <Alert tone="success">
                 Todavía no se leyó ninguna cifra: el proceso en segundo plano lo hace en unos minutos
@@ -171,7 +172,13 @@ export default async function StatsPage({ searchParams }: PageProps<"/estadistic
             <Tile
               label="Publicaciones"
               value={formatInt(rows.length)}
-              hint={summary.pending > 0 ? `${summary.measured} con cifras · ${summary.pending} por leer` : "todas con cifras"}
+              hint={
+                summary.pending > 0 || summary.unavailable > 0
+                  ? [`${summary.measured} con cifras`, summary.pending > 0 && `${summary.pending} por leer`, summary.unavailable > 0 && `${summary.unavailable} sin estadísticas todavía`]
+                      .filter(Boolean)
+                      .join(" · ")
+                  : "todas con cifras"
+              }
             />
             <Tile label="Vistas" value={compact(summary.views)} hint="veces que se mostraron, con repeticiones" />
             <Tile label="Alcance medio" value={compact(summary.avgReach === null ? null : Math.round(summary.avgReach))} hint="personas distintas por publicación" />
@@ -320,6 +327,10 @@ export default async function StatsPage({ searchParams }: PageProps<"/estadistic
                 </dd>
               </div>
               <div>
+                <dt className="inline font-medium text-foreground">Reels: </dt>
+                <dd className="inline">los de Instagram se leen como cualquier publicación. Los de Facebook aparecen en la lista pero sin cifras: sus métricas son otras y todavía no se leen.</dd>
+              </div>
+              <div>
                 <dt className="inline font-medium text-foreground">«—»: </dt>
                 <dd className="inline">la red no entregó esa cifra (no es lo mismo que 0). Las vistas y el alcance pueden tardar unas horas en aparecer.</dd>
               </div>
@@ -397,10 +408,19 @@ function PostRow({ row: r, dateFmt }: { row: StatRow; dateFmt: Intl.DateTimeForm
     <tr className="align-top">
       <td className="px-4 py-3 font-sans">
         <div className="flex min-w-52 items-start gap-3">
-          {r.imageUrl && (
+          {r.imageUrl ? (
             // Imagen dinamica servida por nuestra ruta /media: next/image no aporta nada aqui.
             // eslint-disable-next-line @next/next/no-img-element
             <img src={r.imageUrl} alt="" className="size-10 shrink-0 rounded-md border border-border object-cover" />
+          ) : (
+            // Un video sin portada: un cuadro con el simbolo de reproducir, para que la fila no parezca de otra cosa.
+            r.isVideo && (
+              <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border bg-background text-muted">
+                <svg viewBox="0 0 24 24" className="size-4" fill="currentColor">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </span>
+            )
           )}
           <div className="min-w-0">
             <Link href={`/publicaciones/${r.postId}`} className="line-clamp-2 font-medium hover:underline" title={r.text}>
@@ -417,11 +437,13 @@ function PostRow({ row: r, dateFmt }: { row: StatRow; dateFmt: Intl.DateTimeForm
                 </>
               )}
             </p>
-            {!m && (
-              <p className="mt-1">
-                <Badge>Aún sin leer</Badge>
+            {(r.isVideo || (!m && r.measurable)) && (
+              <p className="mt-1 flex flex-wrap items-center gap-1.5">
+                {r.isVideo && <Badge>Reel</Badge>}
+                {!m && r.measurable && <Badge>Aún sin leer</Badge>}
               </p>
             )}
+            {!m && !r.measurable && <p className="mt-1 text-xs text-muted">{FACEBOOK_REEL_NOTICE}</p>}
             {m && r.fetchedAt && <p className="mt-0.5 text-xs text-muted">Leída {dateFmt.format(r.fetchedAt)}</p>}
             {r.note && (
               <p className="mt-1 line-clamp-3 text-xs text-warning" title={r.note}>

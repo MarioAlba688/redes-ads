@@ -5,6 +5,7 @@ import { describeInternalError } from "@/lib/errors";
 import { MetaApiError } from "@/lib/meta/errors";
 import { classifyStatsError, fetchFacebookPostMetrics, fetchInstagramMediaMetrics } from "@/lib/meta/post-metrics";
 import { missingStatsMessage, missingStatsScopes } from "@/lib/meta/scopes";
+import { isMeasurable, MEASURABLE_WHERE } from "@/lib/stats/measurable";
 import {
   EMPTY_METRICS,
   mergeMetrics,
@@ -87,10 +88,11 @@ export async function refreshTargetMetrics(targetId: string, now = new Date()): 
     if (!target || target.status !== "PUBLISHED" || !target.externalId) return { outcome: "skipped" };
     // Una historia dura 24 horas: no se leen sus estadisticas (y su id no es el de una publicacion normal).
     if (target.post.format === "STORY") return { outcome: "skipped" };
-    // Un video (Reel) tiene otras metricas y otro id: todavia no se leen (no estan verificadas con una cuenta real).
-    if (target.post.media.length > 0) return { outcome: "skipped" };
     const account = target.account;
     if (account.kind !== "FACEBOOK_PAGE" && account.kind !== "INSTAGRAM_PROFILE") return { outcome: "skipped" };
+    // Un Reel de Facebook tiene otras metricas y otro id (el del video): todavia no se lee. El de Instagram es un medio
+    // como cualquier otro y se lee igual.
+    if (!isMeasurable({ accountKind: account.kind, isVideo: target.post.media.length > 0 })) return { outcome: "skipped" };
     if (account.status !== "ACTIVE" || !account.accessTokenEnc) {
       return { outcome: "skipped", message: `La cuenta «${account.name}» está desconectada o su conexión venció. Reconecta Meta en Cuentas.` };
     }
@@ -155,9 +157,10 @@ export async function refreshDueMetrics(now = new Date(), opts: { limit?: number
         status: "PUBLISHED",
         externalId: { not: null },
         publishedAt: { gte: new Date(now.getTime() - STATS_MAX_AGE_DAYS * DAY_MS) },
-        post: { format: "FEED", media: { none: { kind: "VIDEO" } } },
+        post: { format: "FEED" },
         account: { platform: "META", status: "ACTIVE", accessTokenEnc: { not: null }, kind: { in: ["FACEBOOK_PAGE", "INSTAGRAM_PROFILE"] } },
-        OR: [{ metrics: { is: null } }, { metrics: { is: { nextFetchAt: { lte: now } } } }],
+        // Todo menos los Reels de Facebook, y solo lo que nunca se leyo o a lo que ya le toca otra lectura.
+        AND: [MEASURABLE_WHERE, { OR: [{ metrics: { is: null } }, { metrics: { is: { nextFetchAt: { lte: now } } } }] }],
       },
       select: { id: true },
       orderBy: { publishedAt: "desc" },
