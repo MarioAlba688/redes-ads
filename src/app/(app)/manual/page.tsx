@@ -473,8 +473,8 @@ export default async function ManualPage() {
           <h3 className="pt-2 text-sm font-semibold">Después de publicar</h3>
           <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed">
             <li>
-              Los videos <UI>todavía no tienen estadísticas</UI> en esta app (las métricas de un Reel son otras y no están verificadas con una cuenta real) y <UI>no se pueden impulsar</UI> con un anuncio desde aquí (un anuncio con video necesita otra creatividad y aquí se gasta dinero real).
-              Mira sus cifras en Facebook e Instagram, o promociónalos desde Meta.
+              Los Reels de <UI>Instagram</UI> tienen estadísticas como cualquier publicación y salen en Estadísticas. Los de <UI>Facebook todavía no</UI>: se listan con un aviso, porque sus métricas son otras y esa lectura aún no está hecha (mira sus cifras en Facebook).
+              Ningún video se puede <UI>impulsar</UI> con un anuncio desde aquí: un anuncio con video necesita otra creatividad y aquí se gasta dinero real. Promociónalo desde Meta.
             </li>
             <li>
               Los permisos son los mismos que para publicar fotos (<code>pages_manage_posts</code> e <code>instagram_content_publish</code>); no hay nada nuevo que configurar.
@@ -521,6 +521,9 @@ export default async function ManualPage() {
             <li>Solo se miden las publicaciones hechas <UI>desde esta app</UI>, no las que subas a mano a Facebook o Instagram.</li>
             <li>Las vistas y el alcance pueden tardar unas horas en aparecer. Hasta entonces se ve «—», que no es lo mismo que 0.</li>
             <li>Facebook e Instagram no miden igual: compáralas por separado.</li>
+            <li>
+              Los Reels (videos) de <UI>Instagram</UI> se miden como cualquier publicación. Los de <UI>Facebook</UI> aparecen en la lista con la marca «Reel» y un aviso, pero sin cifras: sus métricas son otras y esa lectura todavía no está hecha. <UI>Actualizar</UI> solo lee lo que se puede medir.
+            </li>
           </ul>
         </Section>
 
